@@ -4,17 +4,33 @@
       "label": "Qwen3.5 0.8B base, no action pretrain",
       "path": "playground/Pretrained_models/Qwen3.5-0.8B"
     },
+    "qwen35_0_8b_action": {
+      "label": "Qwen3.5 0.8B Action tokenizer/embedding expansion",
+      "path": "playground/Pretrained_models/Qwen3.5-0.8B-Action"
+    },
     "qwen35_2b": {
       "label": "Qwen3.5 2B base, no action pretrain",
       "path": "playground/Pretrained_models/Qwen3.5-2B"
+    },
+    "qwen35_2b_action": {
+      "label": "Qwen3.5 2B Action tokenizer/embedding expansion",
+      "path": "playground/Pretrained_models/Qwen3.5-2B-Action"
     },
     "qwen35_4b": {
       "label": "Qwen3.5 4B base, no action pretrain",
       "path": "playground/Pretrained_models/Qwen3.5-4B"
     },
+    "qwen35_4b_action": {
+      "label": "Qwen3.5 4B Action tokenizer/embedding expansion",
+      "path": "playground/Pretrained_models/Qwen3.5-4B-Action"
+    },
     "qwen35_9b": {
       "label": "Qwen3.5 9B base, no action pretrain",
       "path": "playground/Pretrained_models/Qwen3.5-9B"
+    },
+    "qwen35_9b_action": {
+      "label": "Qwen3.5 9B Action tokenizer/embedding expansion",
+      "path": "playground/Pretrained_models/Qwen3.5-9B-Action"
     },
     "qwen3vl_4b": {
       "label": "Qwen3-VL 4B Instruct base",
@@ -30,14 +46,32 @@
     }
   },
   "frameworks": {
+    "PI": {"label": "Family-routed PI flow-matching action expert", "default_model": "qwen35_0_8b"},
+    "OFT": {"label": "Family-routed OFT/MLP continuous action expert", "default_model": "qwen3vl_4b"},
+    "GR00T": {"label": "Family-routed GR00T flow-matching action expert", "default_model": "qwen3vl_4b"},
+    "FAST": {"label": "Family-routed FAST token action expert", "default_model": "qwen3vl_4b_action"},
+    "Adapter": {"label": "Family-routed VLA adapter action expert", "default_model": "qwen3vl_4b"},
+    "Dual": {"label": "Qwen dual-system action expert", "default_model": "qwen3vl_4b"},
+    "ABot_M0": {"label": "ABot M0 high-dimensional action expert", "default_model": "qwen3vl_4b"},
+    "LangForce": {"label": "LangForce action expert", "default_model": "qwen3vl_4b"},
     "QwenPI": {"label": "Qwen + PI flow-matching action head", "default_model": "qwen35_0_8b"},
+    "QwenFM": {"label": "Qwen + PI flow-matching action head alias", "default_model": "qwen35_0_8b"},
+    "QwenPI_v3": {"label": "Qwen + PI v3 action head", "default_model": "qwen35_0_8b"},
     "QwenOFT": {"label": "Qwen + OFT/MLP action head", "default_model": "qwen3vl_4b"},
     "QwenGR00T": {"label": "Qwen + GR00T flow-matching head", "default_model": "qwen3vl_4b"},
     "QwenFast": {"label": "Qwen + FAST token action head", "default_model": "qwen3vl_4b_action"},
     "QwenAdapter": {"label": "Qwen + VLA adapter action head", "default_model": "qwen3vl_4b"},
+    "QwenDual": {"label": "Qwen + dual-system action head", "default_model": "qwen3vl_4b"},
+    "Gemma4PI": {"label": "Gemma4 + PI action head", "default_model": "qwen35_0_8b"},
+    "Gemma4GR00T": {"label": "Gemma4 + GR00T action head", "default_model": "qwen3vl_4b"},
+    "WanPI": {"label": "Wan world-model + PI action head", "default_model": "cosmos_predict2"},
+    "WanOFT": {"label": "Wan world-model + OFT action head", "default_model": "cosmos_predict2"},
+    "WanGR00T": {"label": "Wan world-model + GR00T action head", "default_model": "cosmos_predict2"},
     "CosmoPredict2PI": {"label": "Cosmos Predict2 + PI action head", "default_model": "cosmos_predict2"},
     "CosmoPredict2OFT": {"label": "Cosmos Predict2 + OFT action head", "default_model": "cosmos_predict2"},
-    "CosmoPredict2GR00T": {"label": "Cosmos Predict2 + GR00T action head", "default_model": "cosmos_predict2"}
+    "CosmoPredict2GR00T": {"label": "Cosmos Predict2 + GR00T action head", "default_model": "cosmos_predict2"},
+    "CosmosGR00T": {"label": "Cosmos VLM + GR00T action head", "default_model": "cosmos_predict2"},
+    "InternVLA-M1": {"label": "InternVLA M1 action expert", "default_model": "qwen3vl_4b"}
   },
   "train_presets": {
     "libero_vla": {
@@ -119,6 +153,26 @@
       "wandb_project": "starVLA_Calvin",
       "wandb_entity": "your_wandb_entity"
     },
+    "calvin_cotrain": {
+      "label": "Calvin ABC VLA+VLM cotrain",
+      "mode": "cotrain",
+      "trainer_script": "starVLA/training/train_starvla_cotrain.py",
+      "config_yaml": "examples/calvin/train_files/starvla_train_calvin.yaml",
+      "framework": "QwenPI",
+      "model": "qwen35_0_8b",
+      "data_root": "playground/Datasets/calvin",
+      "data_mix": "calvin_task_ABC",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_calvin_cotrain",
+      "vla_batch_size": 4,
+      "vlm_batch_size": 2,
+      "max_train_steps": 30000,
+      "save_interval": 100,
+      "eval_interval": 100,
+      "logging_frequency": 100,
+      "wandb_project": "starVLA_Calvin_Cotrain",
+      "wandb_entity": "your_wandb_entity"
+    },
     "robotwin_vla": {
       "label": "RoboTwin VLA training",
       "mode": "vla",
@@ -139,6 +193,66 @@
       "wandb_project": "starVLA_Robotwin",
       "wandb_entity": "your_wandb_entity"
     },
+    "robotwin_cotrain": {
+      "label": "RoboTwin VLA+VLM cotrain",
+      "mode": "cotrain",
+      "trainer_script": "starVLA/training/train_starvla_cotrain.py",
+      "config_yaml": "examples/Robotwin/train_files/starvla_cotrain_robotwin_abs.yaml",
+      "framework": "QwenOFT",
+      "model": "qwen3vl_4b",
+      "data_root": "playground/Datasets/RoboTwin",
+      "data_mix": "robotwin_all_50",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_robotwin_cotrain",
+      "vla_batch_size": 4,
+      "vlm_batch_size": 2,
+      "max_train_steps": 150000,
+      "save_interval": 100,
+      "eval_interval": 1000,
+      "logging_frequency": 100,
+      "wandb_project": "starVLA_Robotwin_Cotrain",
+      "wandb_entity": "your_wandb_entity"
+    },
+    "robocasa_gr1": {
+      "label": "RoboCasa GR1 29D VLA training",
+      "mode": "vla",
+      "trainer_script": "starVLA/training/train_starvla.py",
+      "config_yaml": "examples/Robocasa_tabletop/train_files/starvla_cotrain_robocasa_gr1.yaml",
+      "framework": "QwenGR00T",
+      "model": "qwen3vl_4b",
+      "data_root": "playground/Datasets/RoboCasa",
+      "data_mix": "fourier_gr1_unified_1000",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_robocasa_gr1",
+      "vla_batch_size": 4,
+      "vlm_batch_size": 2,
+      "max_train_steps": 100000,
+      "save_interval": 1000,
+      "eval_interval": 1000,
+      "logging_frequency": 100,
+      "wandb_project": "starVLA_RoboCasa_GR1",
+      "wandb_entity": "your_wandb_entity"
+    },
+    "robocasa_gr1_cotrain": {
+      "label": "RoboCasa GR1 29D VLA+VLM cotrain",
+      "mode": "cotrain",
+      "trainer_script": "starVLA/training/train_starvla_cotrain.py",
+      "config_yaml": "examples/Robocasa_tabletop/train_files/starvla_cotrain_robocasa_gr1.yaml",
+      "framework": "QwenGR00T",
+      "model": "qwen3vl_4b",
+      "data_root": "playground/Datasets/RoboCasa",
+      "data_mix": "fourier_gr1_unified_1000",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_robocasa_gr1_cotrain",
+      "vla_batch_size": 4,
+      "vlm_batch_size": 2,
+      "max_train_steps": 100000,
+      "save_interval": 1000,
+      "eval_interval": 1000,
+      "logging_frequency": 100,
+      "wandb_project": "starVLA_RoboCasa_GR1_Cotrain",
+      "wandb_entity": "your_wandb_entity"
+    },
     "bridge_vla": {
       "label": "Bridge OXE VLA training",
       "mode": "vla",
@@ -157,6 +271,26 @@
       "eval_interval": 1000,
       "logging_frequency": 100,
       "wandb_project": "starVLA_simplerEnv",
+      "wandb_entity": "your_wandb_entity"
+    },
+    "bridge_cotrain": {
+      "label": "Bridge OXE VLA+VLM cotrain",
+      "mode": "cotrain",
+      "trainer_script": "starVLA/training/train_starvla_cotrain.py",
+      "config_yaml": "examples/SimplerEnv/train_files/starvla_cotrain_oxe.yaml",
+      "framework": "QwenGR00T",
+      "model": "qwen3vl_4b_action",
+      "data_root": "playground/Datasets/OXE_LEROBOT_DATASET",
+      "data_mix": "bridge",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_bridge_cotrain",
+      "vla_batch_size": 16,
+      "vlm_batch_size": 2,
+      "max_train_steps": 100000,
+      "save_interval": 100,
+      "eval_interval": 1000,
+      "logging_frequency": 100,
+      "wandb_project": "starVLA_simplerEnv_Cotrain",
       "wandb_entity": "your_wandb_entity"
     },
     "robocasa365_smoke": {

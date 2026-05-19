@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .catalog import dataset_name, experiment_group_name, load_catalog, model_path
+from .catalog import dataset_name, experiment_group_name, load_catalog, load_policy_catalog, model_path
 from .gpu import select_gpus
 from .perf import PerfSettings, resolve_perf_settings
 from .paths import (
@@ -83,6 +83,11 @@ class TrainLaunch:
     model: str
     gpus: list[int]
     run_id: str
+    dataset_key: str | None = None
+    base_model_key: str | None = None
+    action_expert_key: str | None = None
+    training_policies: list[str] = field(default_factory=list)
+    structure_policies: list[str] = field(default_factory=list)
     max_train_steps: int | None = None
     vla_batch_size: int | None = None
     vlm_batch_size: int | None = None
@@ -94,6 +99,8 @@ class TrainLaunch:
     resume: bool = False
     resume_from_checkpoint: str | None = None
     resume_mode: str = "auto"
+    init_checkpoint: str | None = None
+    reload_modules: str | None = None
     save_full_state: bool = True
     keep_top_k: int = 3
     freeze_modules: str | None = None
@@ -320,14 +327,17 @@ def _accelerate_prefix(
 
 def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
     catalog = load_catalog()
+    policy_catalog = load_policy_catalog()
     preset = dict(catalog["train_presets"][spec.preset])
+    dataset_entry = dict(policy_catalog.get("datasets", {}).get(spec.dataset_key or "", {}))
+    action_expert_entry = dict(policy_catalog.get("action_experts", {}).get(spec.action_expert_key or spec.framework, {}))
     mode = preset["mode"]
     trainer_script = preset["trainer_script"]
 
     model = model_path(spec.model)
-    data_root = spec.data_root if spec.data_root is not None else preset.get("data_root")
-    data_mix = spec.data_mix if spec.data_mix is not None else preset.get("data_mix")
-    vlm_dataset = spec.vlm_dataset if spec.vlm_dataset is not None else preset.get("vlm_dataset")
+    data_root = spec.data_root if spec.data_root is not None else dataset_entry.get("data_root", preset.get("data_root"))
+    data_mix = spec.data_mix if spec.data_mix is not None else dataset_entry.get("data_mix", preset.get("data_mix"))
+    vlm_dataset = spec.vlm_dataset if spec.vlm_dataset is not None else dataset_entry.get("vlm_dataset", preset.get("vlm_dataset"))
     dataset = dataset_name(spec.preset, data_mix=data_mix, vlm_dataset=vlm_dataset)
     experiment_group = spec.experiment_group or experiment_group_name(spec.model, spec.framework, dataset)
     checkpoint_root = spec.run_root_dir if spec.run_root_dir is not None else preset.get("run_root_dir", str(DEFAULT_CHECKPOINT_ROOT))
@@ -364,6 +374,8 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
         nccl_p2p_level=spec.nccl_p2p_level,
         env_overrides=spec.nccl_env,
     )
+
+    policy_args, policy_meta = _policy_launch_overrides(spec, dataset_entry, policy_catalog, mode=mode)
 
     args = _accelerate_prefix(
         num_processes,
@@ -407,17 +419,31 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
         "--trainer.keep_top_k",
         str(spec.keep_top_k),
     ]
+    if _is_world_model_framework(spec.framework):
+        args += [
+            "--framework.world_model.base_wm",
+            model,
+            "--framework.world_model.base_vlm",
+            model,
+        ]
+    args += policy_args
 
     if spec.resume:
         args += ["--trainer.is_resume", "True"]
     if spec.resume_from_checkpoint:
         args += ["--trainer.resume_from_checkpoint", spec.resume_from_checkpoint]
+    if spec.init_checkpoint:
+        args += ["--trainer.pretrained_checkpoint", spec.init_checkpoint]
+    if spec.reload_modules:
+        args += ["--trainer.reload_modules", spec.reload_modules]
 
     if mode in {"vla", "cotrain"}:
         if data_root:
             args += ["--datasets.vla_data.data_root_dir", data_root]
         if data_mix:
             args += ["--datasets.vla_data.data_mix", data_mix]
+        for key, value in _dataset_vla_overrides(dataset_entry).items():
+            args += [f"--datasets.vla_data.{key}", str(value)]
         args += [
             "--datasets.vla_data.per_device_batch_size",
             str(vla_batch),
@@ -461,6 +487,12 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
     lines.append(f"if declare -F _starvla_phase >/dev/null; then _starvla_phase train_prepare preset={q(spec.preset)} run_id={q(spec.run_id)}; fi")
     if spec.gpus:
         lines.append(f"export CUDA_VISIBLE_DEVICES={q(','.join(map(str, spec.gpus)))}")
+    lines.append(f"export STARVLA_DATASET_KEY={q(spec.dataset_key or dataset)}")
+    lines.append(f"export STARVLA_BASE_MODEL_KEY={q(spec.base_model_key or spec.model)}")
+    lines.append(f"export STARVLA_ACTION_EXPERT_KEY={q(spec.action_expert_key or spec.framework)}")
+    lines.append(f"export STARVLA_TRAINING_POLICIES={q(','.join(spec.training_policies))}")
+    lines.append(f"export STARVLA_STRUCTURE_POLICIES={q(','.join(spec.structure_policies))}")
+    lines.append(f"export STARVLA_INIT_CHECKPOINT={q(spec.init_checkpoint or '')}")
     lines.append(f"export STARVLA_PERF_PROFILE={q(perf.resolved_profile)}")
     for key, value in sorted(perf.env_defaults.items()):
         lines.append(_export_default(key, value))
@@ -487,7 +519,12 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
         "preset": spec.preset,
         "mode": mode,
         "framework": spec.framework,
+        "action_expert": spec.action_expert_key or spec.framework,
+        "action_expert_resolved": spec.framework,
+        "action_expert_label": action_expert_entry.get("label"),
         "model": model,
+        "model_key": spec.model,
+        "base_model_key": spec.base_model_key or spec.model,
         "gpus": spec.gpus,
         "num_processes": num_processes,
         "num_machines": spec.num_machines,
@@ -503,6 +540,15 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
         "checkpoint_root": checkpoint_root,
         "experiment_group": experiment_group,
         "dataset": dataset,
+        "dataset_key": spec.dataset_key,
+        "dataset_label": dataset_entry.get("label"),
+        "dataset_action_dim": dataset_entry.get("action_dim"),
+        "dataset_state_dim": dataset_entry.get("state_dim"),
+        "dataset_horizon": dataset_entry.get("horizon"),
+        "normalization_groups": dataset_entry.get("normalization_groups"),
+        "training_policies": spec.training_policies,
+        "structure_policies": spec.structure_policies,
+        "policy_launch": policy_meta,
         "group_root_dir": run_root_dir,
         "run_root_dir": run_root_dir,
         "output_dir": str(Path(run_root_dir) / spec.run_id),
@@ -513,6 +559,9 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
         "resume": spec.resume,
         "resume_from_checkpoint": spec.resume_from_checkpoint,
         "resume_mode": spec.resume_mode,
+        "init_checkpoint": spec.init_checkpoint,
+        "reload_modules": spec.reload_modules,
+        "start_mode": "posttrain_from_checkpoint" if spec.init_checkpoint else "resume" if spec.resume else "base_pretrained",
         "save_full_state": spec.save_full_state,
         "keep_top_k": spec.keep_top_k,
         "freeze_modules": freeze_modules,
@@ -531,6 +580,172 @@ def _default_freeze_modules(framework: str, model_key: str) -> str:
     if "cosmo" in text or "cosmos" in text:
         return "backbone"
     return ""
+
+
+def _is_world_model_framework(framework: str) -> bool:
+    text = framework.lower()
+    return any(token in text for token in ("cosmo", "cosmos", "wan"))
+
+
+def _dataset_vla_overrides(dataset_entry: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "action_type": dataset_entry.get("action_type") or dataset_entry.get("control_mode"),
+        "action_mode": dataset_entry.get("action_mode"),
+        "include_state": dataset_entry.get("include_state"),
+        "delete_pause_frame": dataset_entry.get("delete_pause_frame"),
+    }
+    return {key: value for key, value in allowed.items() if value is not None}
+
+
+def _policy_launch_overrides(
+    spec: TrainLaunch,
+    dataset_entry: dict[str, Any],
+    policy_catalog: dict[str, Any],
+    mode: str,
+) -> tuple[list[str], dict[str, Any]]:
+    args: list[str] = []
+    applied: list[str] = []
+    warnings: list[str] = []
+    training = list(dict.fromkeys(spec.training_policies))
+    structure = list(dict.fromkeys(spec.structure_policies))
+
+    def add(path: str, value: Any, source: str) -> None:
+        if value is None:
+            return
+        args.extend([f"--{path}", str(value)])
+        applied.append(f"{source}:{path}={value}")
+
+    def has_any(*keys: str) -> bool:
+        selected = set(training) | set(structure)
+        return any(key in selected for key in keys)
+
+    action_dim = dataset_entry.get("action_dim")
+    state_dim = dataset_entry.get("state_dim")
+    horizon = dataset_entry.get("horizon")
+    if action_dim is not None:
+        add("framework.action_model.action_dim", int(action_dim), "dataset")
+    if state_dim is not None:
+        add("framework.action_model.state_dim", int(state_dim), "dataset")
+    if horizon is not None:
+        horizon_int = int(horizon)
+        add("framework.action_model.action_horizon", horizon_int, "dataset")
+        add("framework.action_model.future_action_window_size", max(horizon_int - 1, 0), "dataset")
+
+    if training or structure:
+        add("trainer.policy_runtime.enabled", True, "policy")
+        add("trainer.policy_runtime.training_policies", ",".join(training), "policy")
+        add("trainer.policy_runtime.structure_policies", ",".join(structure), "policy")
+        add("trainer.policy_runtime.dataset_key", spec.dataset_key or "", "policy")
+        add("trainer.policy_runtime.base_model_key", spec.base_model_key or spec.model, "policy")
+        add("trainer.policy_runtime.action_expert_key", spec.action_expert_key or spec.framework, "policy")
+        add("trainer.policy_runtime.resolved_framework", spec.framework, "policy")
+        add("trainer.policy_runtime.mode", mode, "policy")
+        add("trainer.policy_runtime.posttrain", bool(spec.init_checkpoint), "policy")
+        add("trainer.policy_runtime.dataset_action_dim", action_dim, "policy")
+        add("trainer.policy_runtime.dataset_state_dim", state_dim, "policy")
+        add("trainer.policy_runtime.dataset_horizon", horizon, "policy")
+        add("trainer.policy_runtime.normalization_groups", ",".join(dataset_entry.get("normalization_groups") or []), "policy")
+
+    if has_any("T02", "T13", "T20"):
+        add("datasets.vla_data.balance_dataset_weights", True, "T02/T13/T20")
+        add("datasets.vla_data.balance_trajectory_weights", True, "T02/T13/T20")
+    if has_any("T04", "T05", "S02", "S08"):
+        add("framework.action_model.fast_tokenizer_name", "playground/Pretrained_models/fast", "FAST")
+        add("trainer.policy_runtime.action_token_warmup_weight", 1.0, "T04/T05/S02/S08")
+    if has_any("T07"):
+        add("trainer.policy_runtime.horizon_curriculum", True, "T07")
+    if has_any("T08", "S10", "S11", "S19", "S29"):
+        add("trainer.policy_runtime.flow_matching_enabled", True, "flow")
+    if has_any("T09", "S12"):
+        add("trainer.policy_runtime.diffusion_enabled", True, "T09/S12")
+    if has_any("T10", "S09"):
+        add("trainer.policy_runtime.hybrid_residual_weight", 0.05, "T10/S09")
+    if has_any("T11", "S13", "S14", "S15"):
+        add("trainer.policy_runtime.grouped_action_weight", 0.05, "T11/S13/S14/S15")
+    if has_any("T12"):
+        add("trainer.loss_scale.vlm", 0.1, "T12")
+        if mode != "cotrain":
+            warnings.append("T12 requested outside a cotrain preset; VLA training remains runnable and records T12 as an auxiliary policy, but VLM batches require a cotrain preset.")
+    if has_any("T14", "S22"):
+        add("trainer.policy_runtime.representation_alignment_weight", 0.01, "T14/S22")
+    if has_any("T15", "T16", "S21"):
+        add("trainer.policy_runtime.future_world_weight", 0.01, "T15/T16/S21")
+    if has_any("T17", "S20"):
+        add("trainer.policy_runtime.intent_bottleneck_weight", 0.01, "T17/S20")
+    if has_any("T18"):
+        add("trainer.policy_runtime.video_retarget_weight", 0.01, "T18")
+    if has_any("T19", "S28"):
+        add("trainer.policy_runtime.uncertainty_weight", 0.01, "T19/S28")
+    if has_any("T21"):
+        add("trainer.policy_runtime.anti_forgetting_weight", 0.01, "T21")
+    if has_any("T22", "S25"):
+        add("datasets.vla_data.video_backend", "torchvision_av", "T22/S25")
+        add("trainer.policy_runtime.augmentation_policy", True, "T22/S25")
+    if has_any("T23", "S17"):
+        add("trainer.policy_runtime.domain_adapter_weight", 0.01, "T23/S17")
+    if has_any("T24", "T25", "T26", "T27", "S26"):
+        add("trainer.policy_runtime.advantage_weighting", True, "T24/T25/T26/T27/S26")
+        add("trainer.policy_runtime.rl_regularization_weight", 0.01, "T24/T25/T26/T27/S26")
+    if has_any("T28", "S30"):
+        add("trainer.keep_top_k", max(int(spec.keep_top_k), 5), "T28/S30")
+        add("trainer.policy_runtime.checkpoint_averaging", True, "T28/S30")
+    if has_any("S01"):
+        add("trainer.policy_runtime.base_preservation", True, "S01")
+    if has_any("S03", "S23", "S24"):
+        add("trainer.policy_runtime.spatial_connector", True, "S03/S23/S24")
+    if has_any("S04"):
+        add("trainer.policy_runtime.embodiment_tokens", True, "S04")
+    if has_any("S05"):
+        add("trainer.policy_runtime.state_encoder", True, "S05")
+    if has_any("S06", "S18"):
+        add("trainer.policy_runtime.temporal_memory", True, "S06/S18")
+    if has_any("S16"):
+        add("trainer.policy_runtime.moe_regularization_weight", 0.01, "S16")
+    if has_any("S27"):
+        add("trainer.policy_runtime.safety_projection", True, "S27")
+    if has_any("S31"):
+        add("trainer.policy_runtime.world_teacher", True, "S31")
+    if has_any("S32"):
+        add("trainer.policy_runtime.cross_modal_input", True, "S32")
+
+    training_entries = {
+        key: policy_catalog.get("training_policies", {}).get(key, {})
+        for key in training
+    }
+    structure_entries = {
+        key: policy_catalog.get("structure_policies", {}).get(key, {})
+        for key in structure
+    }
+    for key, entry in training_entries.items():
+        if not entry:
+            warnings.append(f"Unknown training policy {key}")
+            continue
+        if entry.get("status") == "metadata":
+            warnings.append(f"{key} is now executed through trainer.policy_runtime; catalog status is legacy metadata until the README table is regenerated.")
+    for key, entry in structure_entries.items():
+        if not entry:
+            warnings.append(f"Unknown structure policy {key}")
+            continue
+        preferred = entry.get("preferred_experts") or []
+        selected = spec.action_expert_key or spec.framework
+        if preferred and selected not in preferred and spec.framework not in preferred:
+            warnings.append(f"{key} has native support in {preferred}; selected expert {selected}/{spec.framework} will run the policy-runtime fallback.")
+        if entry.get("status") == "metadata":
+            warnings.append(f"{key} is now executed through trainer.policy_runtime; catalog status is legacy metadata until the README table is regenerated.")
+
+    if "FAST" in {spec.action_expert_key, spec.framework} or spec.framework == "QwenFast":
+        if "action" not in (spec.model or "").lower() and "T04" not in spec.training_policies:
+            warnings.append("FAST is selected with a non-Action model key; add T04/T05 or use an Action-token base model for full token warmup")
+
+    return args, {
+        "applied_args": applied,
+        "warnings": warnings,
+        "training_policy_status": {key: entry.get("status", "unknown") for key, entry in training_entries.items()},
+        "structure_policy_status": {key: entry.get("status", "unknown") for key, entry in structure_entries.items()},
+        "runtime_enabled": bool(training or structure),
+        "runtime_training_policies": training,
+        "runtime_structure_policies": structure,
+    }
 
 
 def _resolve_eval_server_gpus(request: str | None) -> list[int]:
@@ -680,6 +895,7 @@ def build_eval_commands(spec: EvalLaunch) -> tuple[dict[str, str], dict[str, Any
                     f"export star_vla_python={q(DEFAULT_PYTHON)}",
                     f"export gpu_id={q(worker_gpu)}",
                     f"export port={q(worker_port)}",
+                    "export STARVLA_POLICY_STATE_ADAPT=${STARVLA_POLICY_STATE_ADAPT:-1}",
                     "if declare -F _starvla_phase >/dev/null; then _starvla_phase eval_server_launch; fi",
                     f"bash {q(preset['server_script'])}",
                 ]
@@ -708,6 +924,8 @@ def build_eval_commands(spec: EvalLaunch) -> tuple[dict[str, str], dict[str, Any
                     f"export sequence_stride={q(worker_count)}",
                     f"export STARVLA_CALVIN_RENDER_BACKEND={q(calvin_render_backend)}",
                     f"export STARVLA_CALVIN_RENDER_GPU={q(worker_gpu)}",
+                    "export STARVLA_CALVIN_STATE_DIM=${STARVLA_CALVIN_STATE_DIM:-auto}",
+                    "export STARVLA_CALVIN_STATE_SLICE=${STARVLA_CALVIN_STATE_SLICE:-first}",
                     eval_log_dir_export,
                     "if declare -F _starvla_phase >/dev/null; then _starvla_phase eval_client_launch; fi",
                     f"bash {q(preset['client_script'])}" + (f" {extra}" if extra else ""),
@@ -753,6 +971,7 @@ def build_eval_commands(spec: EvalLaunch) -> tuple[dict[str, str], dict[str, Any
                 f"export star_vla_python={q(DEFAULT_PYTHON)}",
                 f"export gpu_id={q(spec.server_gpu)}",
                 f"export port={q(port)}",
+                "export STARVLA_POLICY_STATE_ADAPT=${STARVLA_POLICY_STATE_ADAPT:-1}",
                 "if declare -F _starvla_phase >/dev/null; then _starvla_phase eval_server_launch; fi",
                 f"bash {q(preset['server_script'])}",
             ]
@@ -811,6 +1030,8 @@ def build_eval_commands(spec: EvalLaunch) -> tuple[dict[str, str], dict[str, Any
                     f"export max_steps_per_task={q(max_steps_per_task)}",
                     f"export STARVLA_CALVIN_RENDER_BACKEND={q(calvin_render_backend)}",
                     f"export STARVLA_CALVIN_RENDER_GPU={q(spec.server_gpu)}",
+                    "export STARVLA_CALVIN_STATE_DIM=${STARVLA_CALVIN_STATE_DIM:-auto}",
+                    "export STARVLA_CALVIN_STATE_SLICE=${STARVLA_CALVIN_STATE_SLICE:-first}",
                     eval_log_dir_export,
                     "if declare -F _starvla_phase >/dev/null; then _starvla_phase eval_client_launch; fi",
                     f"bash {q(preset['client_script'])}" + (f" {extra}" if extra else ""),

@@ -15,7 +15,21 @@ from typing import Any
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from interaction.core.catalog import dataset_name, default_model_for_framework, experiment_group_name, keys, load_catalog, resolve_repo_path
+from interaction.core.catalog import (
+    all_action_expert_keys,
+    all_model_keys,
+    base_model_key,
+    dataset_name,
+    default_model_for_framework,
+    experiment_group_name,
+    keys,
+    load_catalog,
+    load_policy_catalog,
+    policy_combo_slug,
+    policy_keys,
+    resolve_action_expert,
+    resolve_repo_path,
+)
 from interaction.core.checks import dataset_quick_report, environment_report, model_quick_report
 from interaction.core.commands import EvalLaunch, TrainLaunch, build_eval_commands, build_train_command, create_extra_window_files, create_job_files
 from interaction.core.diagnostics import compact_value
@@ -65,6 +79,19 @@ def _ask_num_gpus(prompt: str = "Number of GPUs when auto [all]: ") -> int | Non
             cprint(f"[red]Invalid GPU count:[/red] {exc}")
 
 
+def split_multi_values(values: list[Any] | None) -> list[str]:
+    out: list[str] = []
+    for item in values or []:
+        if isinstance(item, (list, tuple)):
+            out.extend(split_multi_values(list(item)))
+            continue
+        for part in str(item).replace(",", " ").split():
+            text = part.strip()
+            if text and text.lower() not in {"none", "auto", "default"} and text not in out:
+                out.append(text)
+    return out
+
+
 def normalize_run_id(value: str | None) -> str | None:
     if value is None:
         return None
@@ -98,12 +125,19 @@ def _confirm_train_launch(meta: dict[str, Any], command: str, yes: bool = False)
     rows = [
         ["preset", meta.get("preset")],
         ["mode", meta.get("mode")],
-        ["model", meta.get("model")],
-        ["action_head", meta.get("framework")],
-        ["dataset", meta.get("dataset") or meta.get("data_mix")],
+        ["dataset_key", meta.get("dataset_key") or meta.get("dataset") or meta.get("data_mix")],
+        ["training_policies", ",".join(meta.get("training_policies") or []) or "-"],
+        ["base_model", meta.get("base_model_key") or meta.get("model_key") or meta.get("model")],
+        ["action_expert", meta.get("action_expert") or meta.get("framework")],
+        ["action_expert_resolved", meta.get("action_expert_resolved") or meta.get("framework")],
+        ["structure_policies", ",".join(meta.get("structure_policies") or []) or "-"],
+        ["dataset_dims", f"a={meta.get('dataset_action_dim') or '-'} s={meta.get('dataset_state_dim') or '-'} h={meta.get('dataset_horizon') or '-'}"],
+        ["model_path", meta.get("model")],
         ["experiment_group", meta.get("experiment_group")],
         ["run_id", meta.get("run_id")],
-        ["run_type", "continue/resume" if meta.get("resume") else "new"],
+        ["run_type", meta.get("start_mode") or ("continue/resume" if meta.get("resume") else "new")],
+        ["init_checkpoint", meta.get("init_checkpoint") or "-"],
+        ["reload_modules", meta.get("reload_modules") or "-"],
         ["gpus", ",".join(map(str, meta.get("gpus") or [])) or "CPU/auto-unset"],
         ["num_processes", meta.get("num_processes")],
         ["mixed_precision", meta.get("mixed_precision")],
@@ -239,6 +273,8 @@ def _train_preflight_rows(meta: dict[str, Any], allow_readonly_output: bool = Fa
         ("base_model", meta.get("model"), True),
         ("accelerate_config", "starVLA/config/deepseeds/deepspeed_zero2.yaml", True),
     ]
+    if meta.get("init_checkpoint"):
+        checks.append(("init_checkpoint", meta.get("init_checkpoint"), True))
     rows: list[list[Any]] = []
     failed = False
     for name, value, required in checks:
@@ -261,6 +297,8 @@ def _train_preflight_rows(meta: dict[str, Any], allow_readonly_output: bool = Fa
         rows.append(["perf_warning", status_markup("warn"), warning])
     for warning in meta.get("throughput_warnings") or []:
         rows.append(["throughput_warning", status_markup("warn"), warning])
+    for warning in (meta.get("policy_launch") or {}).get("warnings") or []:
+        rows.append(["policy_warning", status_markup("warn"), warning])
     for note in meta.get("throughput_notes") or []:
         rows.append(["throughput_note", status_markup("ok"), note])
     return rows, failed
@@ -451,16 +489,105 @@ def command_perf_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_catalog(args: argparse.Namespace) -> int:
+    catalog = load_catalog()
+    policies = load_policy_catalog()
+    kind = args.kind
+
+    def show_datasets() -> None:
+        rows = []
+        for key, item in policies.get("datasets", {}).items():
+            rows.append(
+                [
+                    key,
+                    item.get("label", key),
+                    item.get("preset", "-"),
+                    item.get("data_mix") or item.get("vlm_dataset") or "-",
+                    item.get("embodiment", "-"),
+                    f"{item.get('action_dim', '-')}/{item.get('state_dim', '-')}/{item.get('horizon', '-')}",
+                    ",".join(item.get("recommended_training_policies", [])[:5]),
+                    ",".join(item.get("recommended_structure_policies", [])[:5]),
+                ]
+            )
+        print_table("Datasets", ["id", "label", "preset", "mix", "embodiment", "a/s/h", "train policy", "structure"], rows)
+
+    def show_models() -> None:
+        rows = []
+        for key in all_model_keys():
+            entry = policies.get("base_models", {}).get(key, {})
+            model_key = entry.get("model", key)
+            model_entry = catalog.get("models", {}).get(model_key, {})
+            path = model_entry.get("path", model_key)
+            resolved = resolve_repo_path(path)
+            rows.append([key, entry.get("family", "-"), entry.get("label") or model_entry.get("label", key), model_key, path, status_markup(bool(resolved and resolved.exists()))])
+        print_table("Base Models", ["id", "family", "label", "catalog_key", "path", "exists"], rows)
+
+    def show_experts() -> None:
+        rows = []
+        for key in all_action_expert_keys():
+            entry = policies.get("action_experts", {}).get(key, {})
+            fw = entry.get("default_framework", key)
+            family_routes = entry.get("framework_by_family", {})
+            rows.append([key, entry.get("label") or catalog.get("frameworks", {}).get(key, {}).get("label", key), fw, json.dumps(family_routes, sort_keys=True) if family_routes else "-", ",".join(entry.get("training_policies", [])), ",".join(entry.get("structure_policies", []))])
+        print_table("Action Experts", ["id", "label", "default/framework", "family_routes", "T", "S"], rows)
+
+    def show_training() -> None:
+        rows = [[key, item.get("name", key), item.get("stage", "-"), item.get("status", "-"), ",".join(item.get("preferred_experts", item.get("preferred_modes", [])))] for key, item in policies.get("training_policies", {}).items()]
+        print_table("Training Policies", ["id", "name", "stage", "status", "preferred"], rows)
+
+    def show_structure() -> None:
+        rows = [[key, item.get("name", key), item.get("target", "-"), item.get("status", "-"), ",".join(item.get("preferred_experts", []))] for key, item in policies.get("structure_policies", {}).items()]
+        print_table("Structure Policies", ["id", "name", "target", "status", "preferred"], rows)
+
+    if kind in {"all", "datasets"}:
+        show_datasets()
+    if kind in {"all", "base-models", "models"}:
+        show_models()
+    if kind in {"all", "action-experts", "experts"}:
+        show_experts()
+    if kind in {"all", "training-policies", "training"}:
+        show_training()
+    if kind in {"all", "structure-policies", "structure"}:
+        show_structure()
+    return 0
+
+
 def _resolve_train_defaults(args: argparse.Namespace) -> TrainLaunch:
     catalog = load_catalog()
-    preset = catalog["train_presets"][args.preset]
-    framework = args.framework or preset.get("framework", "QwenPI")
-    model = args.model or preset.get("model") or default_model_for_framework(framework)
+    policy_catalog = load_policy_catalog()
+    dataset_key = getattr(args, "dataset", None)
+    dataset_entry = policy_catalog.get("datasets", {}).get(dataset_key or "", {})
+    training_policies = split_multi_values(getattr(args, "training_policy", []))
+    structure_policies = split_multi_values(getattr(args, "structure_policy", []))
+    preset_key = dataset_entry.get("preset", args.preset) if dataset_key else args.preset
+    if "T12" in training_policies:
+        cotrain_candidates = []
+        if preset_key.endswith("_vla"):
+            cotrain_candidates.append(preset_key[:-4] + "_cotrain")
+        cotrain_candidates.append(preset_key + "_cotrain")
+        for candidate in cotrain_candidates:
+            if candidate in catalog["train_presets"]:
+                preset_key = candidate
+                break
+    if preset_key not in catalog["train_presets"]:
+        raise ValueError(f"Dataset {dataset_key} points to unknown train preset {preset_key}")
+    preset = catalog["train_presets"][preset_key]
+    requested_model = getattr(args, "base_model", None) or args.model or preset.get("model")
+    requested_action_expert = getattr(args, "action_expert", None) or args.framework or preset.get("framework", "QwenPI")
+    model = base_model_key(requested_model or default_model_for_framework(requested_action_expert))
+    framework, _action_entry = resolve_action_expert(requested_action_expert, model)
+    if not model:
+        model = default_model_for_framework(framework)
     prefix = preset.get("run_id_prefix", args.preset)
-    data_mix = args.data_mix if args.data_mix is not None else preset.get("data_mix")
-    vlm_dataset = args.vlm_dataset if args.vlm_dataset is not None else preset.get("vlm_dataset")
-    dataset = dataset_name(args.preset, data_mix=data_mix, vlm_dataset=vlm_dataset)
-    experiment_group = args.experiment_group or experiment_group_name(model, framework, dataset)
+    data_root = args.data_root if args.data_root is not None else dataset_entry.get("data_root")
+    data_mix = args.data_mix if args.data_mix is not None else dataset_entry.get("data_mix", preset.get("data_mix"))
+    vlm_dataset = args.vlm_dataset if args.vlm_dataset is not None else dataset_entry.get("vlm_dataset", preset.get("vlm_dataset"))
+    dataset = dataset_key or dataset_name(preset_key, data_mix=data_mix, vlm_dataset=vlm_dataset)
+    combo_slug = policy_combo_slug(training_policies, structure_policies)
+    base_group = experiment_group_name(model, framework, dataset)
+    if combo_slug:
+        base_group = f"{base_group}-{combo_slug}"
+    experiment_group = args.experiment_group or base_group
     checkpoint_root = args.run_root_dir or preset.get("run_root_dir", str(DEFAULT_CHECKPOINT_ROOT))
     group_root = Path(checkpoint_root) / experiment_group
     run_mode = "continue" if args.resume else args.run_mode
@@ -470,25 +597,36 @@ def _resolve_train_defaults(args: argparse.Namespace) -> TrainLaunch:
         if not run_id:
             raise ValueError(f"No existing run found under {group_root}; pass --run-id or use --run-mode new.")
     run_id = run_id or default_run_id(prefix)
+    init_checkpoint = normalize_run_id(getattr(args, "init_checkpoint", None))
+    reload_modules = normalize_run_id(getattr(args, "reload_modules", None))
+    if init_checkpoint and (run_mode == "continue" or args.resume_from_checkpoint):
+        raise ValueError("--init-checkpoint/--posttrain-from starts a new post-training run; use resume only to continue an existing run.")
     gpus = select_gpus(args.gpus, args.num_gpus, args.min_free_mb)
     extra_args = args.extra or []
     return TrainLaunch(
-        preset=args.preset,
+        preset=preset_key,
         framework=framework,
         model=model,
         gpus=gpus,
         run_id=run_id,
+        dataset_key=dataset_key,
+        base_model_key=requested_model,
+        action_expert_key=requested_action_expert,
+        training_policies=training_policies,
+        structure_policies=structure_policies,
         max_train_steps=args.max_steps,
         vla_batch_size=args.vla_batch_size,
         vlm_batch_size=args.vlm_batch_size,
-        data_root=args.data_root,
-        data_mix=args.data_mix,
-        vlm_dataset=args.vlm_dataset,
+        data_root=data_root,
+        data_mix=data_mix,
+        vlm_dataset=vlm_dataset,
         run_root_dir=args.run_root_dir,
         experiment_group=experiment_group,
         resume=(run_mode == "continue") or bool(args.resume_from_checkpoint),
         resume_from_checkpoint=args.resume_from_checkpoint,
         resume_mode=args.resume_mode,
+        init_checkpoint=init_checkpoint,
+        reload_modules=reload_modules,
         save_full_state=not args.no_full_state,
         keep_top_k=args.keep_top_k,
         freeze_modules=args.freeze_modules,
@@ -1075,9 +1213,10 @@ def command_menu(args: argparse.Namespace) -> int:
     while True:
         choice = _ask_choice(
             "StarVLA interaction",
-            ["check", "perf_check", "paths", "selftest", "launch_train", "launch_eval", "list", "monitor", "attach", "stop", "exit"],
+            ["check", "catalog", "perf_check", "paths", "selftest", "launch_train", "launch_eval", "list", "monitor", "attach", "stop", "exit"],
             {
                 "check": "environment, paths, imports, action heads",
+                "catalog": "datasets, base models, action experts, training/structure policies",
                 "perf_check": "GPU topology, NCCL profile, bandwidth-test readiness",
                 "paths": "show checkpoint and interaction run save locations",
                 "selftest": "real tmux CPU-only orchestration test",
@@ -1094,6 +1233,8 @@ def command_menu(args: argparse.Namespace) -> int:
             return 0
         if choice == "check":
             command_check(argparse.Namespace(skip_action_heads=False))
+        elif choice == "catalog":
+            command_catalog(argparse.Namespace(kind="all"))
         elif choice == "perf_check":
             command_perf_check(
                 argparse.Namespace(
@@ -1126,17 +1267,29 @@ def command_menu(args: argparse.Namespace) -> int:
             command_stop(argparse.Namespace(job=input("job name or run dir: ").strip()))
         elif choice == "launch_train":
             catalog = load_catalog()
-            train_values = _available_train_presets(catalog)
-            preset = _ask_choice("Training preset", train_values, {k: v["label"] for k, v in catalog["train_presets"].items()})
-            framework = _ask_choice("Framework/action head", keys("frameworks"), {k: v["label"] for k, v in catalog["frameworks"].items()}, default=max(0, keys("frameworks").index(catalog["train_presets"][preset]["framework"])))
-            default_model = catalog["train_presets"][preset].get("model") or default_model_for_framework(framework)
-            model_values = keys("models")
-            model = _ask_choice("Base model", model_values, {k: v["label"] for k, v in catalog["models"].items()}, default=max(0, model_values.index(default_model)))
+            policy_catalog = load_policy_catalog()
+            dataset_values = policy_keys("datasets")
+            dataset_key = _ask_choice("Dataset", dataset_values, {k: v.get("label", k) for k, v in policy_catalog.get("datasets", {}).items()})
+            preset = policy_catalog["datasets"][dataset_key].get("preset", "libero_vla")
+            action_values = all_action_expert_keys()
+            default_action = catalog["train_presets"][preset].get("framework", "PI")
+            action_expert = _ask_choice("Action expert", action_values, {k: policy_catalog.get("action_experts", {}).get(k, catalog.get("frameworks", {}).get(k, {})).get("label", k) for k in action_values}, default=max(0, action_values.index(default_action) if default_action in action_values else 0))
+            default_model = catalog["train_presets"][preset].get("model") or default_model_for_framework(action_expert)
+            model_values = all_model_keys()
+            model = _ask_choice("Base model", model_values, {k: policy_catalog.get("base_models", {}).get(k, catalog.get("models", {}).get(k, {})).get("label", k) for k in model_values}, default=max(0, model_values.index(default_model) if default_model in model_values else 0))
+            training_default = policy_catalog["datasets"][dataset_key].get("recommended_training_policies", [])[:3]
+            structure_default = policy_catalog["datasets"][dataset_key].get("recommended_structure_policies", [])[:3]
+            training_policies = input(f"Training policies comma/space list [{','.join(training_default)}]: ").strip()
+            structure_policies = input(f"Structure policies comma/space list [{','.join(structure_default)}]: ").strip()
+            training_policy_values = split_multi_values([training_policies]) or training_default
+            structure_policy_values = split_multi_values([structure_policies]) or structure_default
+            framework, _ = resolve_action_expert(action_expert, base_model_key(model))
             preset_cfg = catalog["train_presets"][preset]
-            data_mix = preset_cfg.get("data_mix")
-            vlm_dataset = preset_cfg.get("vlm_dataset")
-            dataset = dataset_name(preset, data_mix=data_mix, vlm_dataset=vlm_dataset)
+            dataset = dataset_key
             experiment_group = experiment_group_name(model, framework, dataset)
+            combo_slug = policy_combo_slug(training_policy_values, structure_policy_values)
+            if combo_slug:
+                experiment_group = f"{experiment_group}-{combo_slug}"
             checkpoint_root = preset_cfg.get("run_root_dir", str(DEFAULT_CHECKPOINT_ROOT))
             group_root = Path(checkpoint_root) / experiment_group
             latest_run = latest_checkpoint_run_id(preset_cfg.get("run_id_prefix", preset), group_root)
@@ -1145,9 +1298,12 @@ def command_menu(args: argparse.Namespace) -> int:
                 ["item", "value"],
                 [
                     ["preset", preset],
-                    ["action_head", framework],
-                    ["model", model],
-                    ["dataset", dataset],
+                    ["dataset", dataset_key],
+                    ["training_policy", ",".join(training_policy_values) or "-"],
+                    ["base_model", model],
+                    ["action_expert", action_expert],
+                    ["resolved_framework", framework],
+                    ["structure_policy", ",".join(structure_policy_values) or "-"],
                     ["experiment_group", experiment_group],
                     ["checkpoint_group_root", group_root],
                     ["latest_run", latest_run or "-"],
@@ -1176,6 +1332,12 @@ def command_menu(args: argparse.Namespace) -> int:
                     },
                 )
                 resume_from_checkpoint = normalize_run_id(input("Explicit checkpoint/state path [auto]: ").strip())
+            init_checkpoint = None
+            reload_modules = None
+            if run_mode == "new":
+                init_checkpoint = normalize_run_id(input("Post-train from checkpoint [none]: ").strip())
+                if init_checkpoint:
+                    reload_modules = normalize_run_id(input("Reload modules from checkpoint [full model]: ").strip())
             gpu_request = input("GPUs (auto/all/0,1...) [auto]: ").strip() or "auto"
             num_gpus = _ask_num_gpus()
             if run_mode == "continue":
@@ -1207,8 +1369,13 @@ def command_menu(args: argparse.Namespace) -> int:
             dataloader_workers = _ask_optional_int("DataLoader workers per rank [auto]: ", name="DataLoader workers", min_value=0)
             ns = argparse.Namespace(
                 preset=preset,
-                framework=framework,
-                model=model,
+                dataset=dataset_key,
+                framework=None,
+                action_expert=action_expert,
+                model=None,
+                base_model=model,
+                training_policy=training_policy_values,
+                structure_policy=structure_policy_values,
                 gpus=gpu_request,
                 num_gpus=num_gpus,
                 min_free_mb=60000,
@@ -1229,6 +1396,8 @@ def command_menu(args: argparse.Namespace) -> int:
                 resume=(run_mode == "continue"),
                 resume_from_checkpoint=resume_from_checkpoint,
                 resume_mode=resume_mode,
+                init_checkpoint=init_checkpoint,
+                reload_modules=reload_modules,
                 no_full_state=False,
                 keep_top_k=3,
                 freeze_modules=None,
@@ -1367,6 +1536,14 @@ def build_parser() -> argparse.ArgumentParser:
     paths = sub.add_parser("paths", help="show checkpoint, run, and tmux artifact locations")
     paths.set_defaults(func=command_paths)
 
+    cat = sub.add_parser("catalog", help="show selectable datasets, base models, action experts, and T/S policies")
+    cat.add_argument(
+        "--kind",
+        choices=["all", "datasets", "base-models", "models", "action-experts", "experts", "training-policies", "training", "structure-policies", "structure"],
+        default="all",
+    )
+    cat.set_defaults(func=command_catalog)
+
     perf = sub.add_parser("perf-check", help="inspect GPU topology, NCCL profile, and bandwidth-test readiness")
     perf.add_argument("--gpus", default="auto", help="auto, all, or comma-separated GPU ids")
     perf.add_argument("--num-gpus", type=parse_num_gpus, default=8, help="integer GPU count, all, or auto")
@@ -1385,8 +1562,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     train = sub.add_parser("train", help="launch tmux-managed training")
     train.add_argument("--preset", choices=keys("train_presets"), default="libero_vla")
-    train.add_argument("--framework", choices=keys("frameworks"))
+    train.add_argument("--dataset", choices=policy_keys("datasets"), help="benchmark dataset id; overrides the preset data root/mix")
+    train.add_argument("--framework", choices=all_action_expert_keys(), help="legacy concrete framework/action head id")
+    train.add_argument("--action-expert", choices=all_action_expert_keys(), help="free action expert id; family-routed aliases include PI/OFT/GR00T/FAST")
     train.add_argument("--model", help="model key from catalog or explicit path")
+    train.add_argument("--base-model", choices=all_model_keys(), help="free base model id; alias for --model with policy metadata")
+    train.add_argument("--training-policy", "--training-policies", nargs="+", action="append", default=[], help="training policy IDs, e.g. T01 T06 T07 or T01,T06")
+    train.add_argument("--structure-policy", "--structure-policies", nargs="+", action="append", default=[], help="structure policy IDs, e.g. S01 S07")
     train.add_argument("--gpus", default="auto", help="auto, all, or comma-separated GPU ids")
     train.add_argument("--num-gpus", type=parse_num_gpus, help="integer GPU count, all, or auto")
     train.add_argument("--min-free-mb", type=int, default=60000)
@@ -1403,6 +1585,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--resume", action="store_true", help="resume from the latest checkpoint under the run output directory")
     train.add_argument("--resume-from-checkpoint", help="explicit Accelerate state directory or model weight file to resume from")
     train.add_argument("--resume-mode", choices=["auto", "full", "weights"], default="auto")
+    train.add_argument("--init-checkpoint", "--posttrain-from", dest="init_checkpoint", help="load an existing trained model as initialization for a new post-training run")
+    train.add_argument("--reload-modules", help="comma-separated module paths to load from --init-checkpoint, e.g. action_model,qwen_vl_interface")
     train.add_argument("--no-full-state", action="store_true", help="only save model weights; disables optimizer/RNG/scheduler state snapshots")
     train.add_argument("--keep-top-k", type=int, default=3, help="keep only the best K model-weight checkpoints by lowest loss")
     train.add_argument("--freeze-modules", help="comma-separated module paths to freeze; default is backbone for CosmoPredict2 and empty for Qwen")

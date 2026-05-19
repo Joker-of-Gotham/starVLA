@@ -148,6 +148,18 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
         ),
     ),
     FailurePattern(
+        "state_action_dim_mismatch",
+        "fatal",
+        "model-input",
+        re.compile(r"(mat1 and mat2 shapes cannot be multiplied|state_dim|action_dim|Action dim mismatch|State.*dim.*mismatch)", re.I),
+        "Model input/action dimensions do not match the selected dataset or checkpoint.",
+        (
+            "Check dataset action_dim/state_dim/horizon in the generated policy catalog metadata.",
+            "For CALVIN eval, verify STARVLA_CALVIN_STATE_DIM and server metadata; current CALVIN checkpoints usually expect 7D state.",
+            "Relaunch with the intended --dataset/--action-expert combination so framework.action_model.* dims are generated from the dataset.",
+        ),
+    ),
+    FailurePattern(
         "config_error",
         "fatal",
         "configuration",
