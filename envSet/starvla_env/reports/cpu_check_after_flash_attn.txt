@@ -1,0 +1,96 @@
+                                  Environment                                   
+┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ item           ┃ value                                                       ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ repo           │ /inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA  │
+│ activate       │ OK                                                          │
+│ python         │ OK                                                          │
+│                │ /inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/ │
+│                │ env/starvla-py310/bin/python                                │
+│ tmux           │ OK                                                          │
+│ proxy_clean    │ OK                                                          │
+│ cuda_available │ NO                                                          │
+└────────────────┴─────────────────────────────────────────────────────────────┘
+                               GPUs                                
+┏━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━━┓
+┃ id ┃ name            ┃ H200 ┃ used ┃ free ┃ util ┃ temp ┃ power ┃
+┡━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━━┩
+│ -  │ no GPU detected │ -    │ -    │ -    │ -    │ -    │ -     │
+└────┴─────────────────┴──────┴──────┴──────┴──────┴──────┴───────┘
+                                 Artifact roots                                 
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ item                       ┃ value                                           ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ data_root                  │ /inspire/qb-ilm2/project/26summer-camp-10/26220 │
+│                            │ 447/data/starvla                                │
+│ checkpoint_root            │ /inspire/qb-ilm2/project/26summer-camp-10/26220 │
+│                            │ 447/data/starvla/checkpoints                    │
+│ checkpoint_root_exists     │ OK                                              │
+│ checkpoint_root_writable   │ FAIL                                            │
+│ desired_runs_root          │ /inspire/qb-ilm2/project/26summer-camp-10/26220 │
+│                            │ 447/data/starvla/runs                           │
+│ desired_runs_root_exists   │ OK                                              │
+│ desired_runs_root_writable │ FAIL                                            │
+│ active_runs_root           │ /inspire/qb-ilm2/project/26summer-camp-10/26220 │
+│                            │ 447/starVLA/interaction/runs                    │
+│ fallback_runs_root         │ /inspire/qb-ilm2/project/26summer-camp-10/26220 │
+│                            │ 447/starVLA/interaction/runs                    │
+│ using_fallback_runs_root   │ OK                                              │
+└────────────────────────────┴─────────────────────────────────────────────────┘
+         Python imports          
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃ module       ┃ status         ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│ accelerate   │ ok 1.5.2       │
+│ decord       │ ok 0.6.0       │
+│ diffusers    │ ok 0.38.0      │
+│ flash_attn   │ ok 2.7.4.post1 │
+│ omegaconf    │ ok 2.3.0       │
+│ pytorch3d    │ ok 0.7.6       │
+│ rich         │ ok ok          │
+│ torch        │ ok 2.6.0+cu124 │
+│ transformers │ ok 4.57.0      │
+└──────────────┴────────────────┘
+                        Required paths                        
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ path                                              ┃ exists ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ bar/activate_starvla_no_proxy.sh                  │ OK     │
+│ env/starvla-py310/bin/python                      │ OK     │
+│ playground/Pretrained_models/fast                 │ OK     │
+│ playground/Datasets/LEROBOT_LIBERO_DATA           │ OK     │
+│ playground/Datasets/calvin                        │ OK     │
+│ playground/Datasets/RoboTwin                      │ OK     │
+│ playground/Pretrained_models/Qwen3.5-0.8B         │ OK     │
+│ playground/Pretrained_models/Qwen3-VL-4B-Instruct │ OK     │
+└───────────────────────────────────────────────────┴────────┘
+                                Dataset presets                                 
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ preset            ┃ mix                    ┃ root                   ┃ exists ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ libero_vla        │ libero_all             │ playground/Datasets/LE │ OK     │
+│                   │                        │ ROBOT_LIBERO_DATA      │        │
+│ libero_cotrain    │ libero_all             │ playground/Datasets/LE │ OK     │
+│                   │                        │ ROBOT_LIBERO_DATA      │        │
+│ calvin_vla        │ calvin_task_ABC_D      │ playground/Datasets/ca │ OK     │
+│                   │                        │ lvin                   │        │
+│ robotwin_vla      │ robotwin_all_50        │ playground/Datasets/Ro │ OK     │
+│                   │                        │ boTwin                 │        │
+│ bridge_vla        │ bridge                 │ playground/Datasets/OX │ OK     │
+│                   │                        │ E_LEROBOT_DATASET      │        │
+│ robocasa365_smoke │ robocasa365_open_drawe │ playground/Datasets/ro │ FAIL   │
+│                   │ r_target_human         │ bocasa365              │        │
+└───────────────────┴────────────────────────┴────────────────────────┴────────┘
+                    Action heads                     
+┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ status ┃ tail                                     ┃
+┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ OK     │ FAST ok                                  │
+│        │ OFT/MLP ok                               │
+│        │ Total number of DiT parameters:  9178400 │
+│        │ GR00T ok                                 │
+│        │ Total number of DiT parameters:  149184  │
+│        │ PI/LayerwiseFM ok                        │
+│        │ VLA_Adapter ok                           │
+└────────┴──────────────────────────────────────────┘
+Environment check passed.

@@ -1,0 +1,42 @@
+StarVLA offline H200 package report
+created_utc=2026-05-19T03:20:37Z
+staging_root=/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/envSet/starvla_env
+requested_target=/inspire/qb-ilm2/project/26summer-camp-10/26220447/envSet/starvla_env
+requested_target_writable_from_this_session=false
+
+Included interaction overlay:
+repo_overlay/interaction/README.md
+repo_overlay/interaction/__init__.py
+repo_overlay/interaction/bin/starvla-interact.sh
+repo_overlay/interaction/config/accelerate_h200_zero2.yaml
+repo_overlay/interaction/config/ds_h200_zero2.json
+repo_overlay/interaction/config/presets.json
+repo_overlay/interaction/core/__init__.py
+repo_overlay/interaction/core/catalog.py
+repo_overlay/interaction/core/checks.py
+repo_overlay/interaction/core/commands.py
+repo_overlay/interaction/core/diagnostics.py
+repo_overlay/interaction/core/gpu.py
+repo_overlay/interaction/core/monitor.py
+repo_overlay/interaction/core/paths.py
+repo_overlay/interaction/core/perf.py
+repo_overlay/interaction/core/tmux.py
+repo_overlay/interaction/core/ui.py
+repo_overlay/interaction/starvla.py
+
+Packaged NCCL perf wrappers:
+  all_gather_perf -> _nccl_perf_wrapper.sh
+  all_reduce_perf -> _nccl_perf_wrapper.sh
+  alltoall_perf -> _nccl_perf_wrapper.sh
+  broadcast_perf -> _nccl_perf_wrapper.sh
+  gather_perf -> _nccl_perf_wrapper.sh
+  hypercube_perf -> _nccl_perf_wrapper.sh
+  reduce_perf -> _nccl_perf_wrapper.sh
+  reduce_scatter_perf -> _nccl_perf_wrapper.sh
+  scatter_perf -> _nccl_perf_wrapper.sh
+  sendrecv_perf -> _nccl_perf_wrapper.sh
+
+Validated commands:
+  bash scripts/install_offline.sh --skip-check: rc 0
+  bash scripts/check_offline_env.sh: rc 0
+  source scripts/activate_offline_env.sh + tmux/all_reduce_perf/imports: rc 0

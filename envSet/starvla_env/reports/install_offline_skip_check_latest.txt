@@ -1,0 +1,28 @@
+starvla-py310-env.tar: OK
+Patching existing env: /inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/env/starvla-py310
+Processing ./envSet/starvla_env/wheelhouse/flash_attn/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+Installing collected packages: flash-attn
+  Attempting uninstall: flash-attn
+    Found existing installation: flash_attn 2.7.4.post1
+    Uninstalling flash_attn-2.7.4.post1:
+      Successfully uninstalled flash_attn-2.7.4.post1
+Successfully installed flash-attn-2.7.4.post1
+Obtaining file:///inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: starVLA
+  Building editable for starVLA (pyproject.toml): started
+  Building editable for starVLA (pyproject.toml): finished with status 'done'
+  Created wheel for starVLA: filename=starvla-1.0.1-0.editable-py3-none-any.whl size=16224 sha256=f55bbb957d166f3a7b9fcb7b956700b363f87ed29475eb65051481f3e02bb6ec
+  Stored in directory: /tmp/pip-ephem-wheel-cache-rilyivrm/wheels/27/b5/64/d650d09f620cd7392ddd1c4e28fe61bbabe272accf7134fab2
+Successfully built starVLA
+Installing collected packages: starVLA
+  Attempting uninstall: starVLA
+    Found existing installation: starVLA 1.0.1
+    Uninstalling starVLA-1.0.1:
+      Successfully uninstalled starVLA-1.0.1
+Successfully installed starVLA-1.0.1
+Installed StarVLA performance tool wrappers into /inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/env/starvla-py310/bin
+Offline env is ready: /inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/env/starvla-py310

@@ -1,0 +1,16 @@
+Packaged at 2026-05-19T03:10:28Z
+NCCL test wrappers:
+  all_gather_perf.real 306784 bytes
+  all_reduce_perf.real 307392 bytes
+  alltoall_perf.real 310808 bytes
+  broadcast_perf.real 308144 bytes
+  gather_perf.real 313864 bytes
+  hypercube_perf.real 313936 bytes
+  reduce_perf.real 308480 bytes
+  reduce_scatter_perf.real 309240 bytes
+  scatter_perf.real 312608 bytes
+  sendrecv_perf.real 312528 bytes
+libverifiable:
+  /inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/envSet/starvla_env/performance_tools/lib/verifiable/libverifiable.so.0 21216024 bytes
+p2pBandwidthLatencyTest: packaged from NVIDIA CUDA Samples v12.4 at performance_tools/cuda_samples/bin/p2pBandwidthLatencyTest
+nvbandwidth: not bundled; official build requires Boost program_options development files missing from this CPU zone

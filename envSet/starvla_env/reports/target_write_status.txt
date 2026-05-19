@@ -1,0 +1,5 @@
+requested_target=/inspire/qb-ilm2/project/26summer-camp-10/26220447/envSet/starvla_env
+status=not_writable_from_current_cpu_sandbox
+staging_root=/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/envSet/starvla_env
+sync_script=scripts/sync_to_requested_target.sh
+checked_utc=2026-05-19T03:20:38Z

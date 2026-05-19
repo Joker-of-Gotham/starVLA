@@ -1,0 +1,102 @@
+{
+  "created_utc": "2026-05-19T03:19:53Z",
+  "staging_root": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/envSet/starvla_env",
+  "requested_target_root": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/envSet/starvla_env",
+  "requested_target_writable_from_this_session": false,
+  "repo_root": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA",
+  "python_env_default": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/env/starvla-py310",
+  "archive": {
+    "path": "archives/starvla-py310-env.tar",
+    "bytes": 7562137600,
+    "sha256": "ca236a59571e4f7eb45c010ea99dfc4b9c7d7f0d0c520b780b8a026ff5056760"
+  },
+  "python_overlay": {
+    "path": "python_overlays/transformers_5_2_stack",
+    "bytes": 81580073,
+    "sha256_manifest": "7d657e578e96bd671683a2fd73ae1eac197f5c389bb1b31b6c435b7f94cf4ec0",
+    "purpose": "Upgrade Transformers stack to 5.2.0 so Qwen3.5/Qwen3-VL runtime classes are available offline."
+  },
+  "qwen35_fastpath_sources": {
+    "path": "sources/qwen35_fastpath",
+    "install_script": "scripts/install_qwen35_fastpath.sh",
+    "optional_gpu_fix_flag": "--install-qwen35-fastpath",
+    "packages": {
+      "causal_conv1d-1.6.2.post1.tar.gz": "245e314ea21064ded7a5bf6b3b842b644aa6f92e45cecfe3e935629744c35ff4",
+      "flash_linear_attention-0.5.0.tar.gz": "22b789a47f07738b4382ecdf775d7bb40e0d803c467c34f8e2ecd6a1dc780938"
+    }
+  },
+  "flash_attn_wheel": {
+    "path": "wheelhouse/flash_attn/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl",
+    "bytes": 187815087,
+    "sha256": "ffe17686fa1a0f288de9eae7c32af209d32a27b037ef28614f042b377af5b15a"
+  },
+  "wheelhouse_core_file_count": 14,
+  "python_runtime_path": "python/python310",
+  "tmux": {
+    "wrapper": "system_tools/tmux/bin/tmux",
+    "version": "tmux 3.4"
+  },
+  "performance_tools": {
+    "nccl_perf_wrappers": [
+      "all_gather_perf",
+      "all_reduce_perf",
+      "alltoall_perf",
+      "broadcast_perf",
+      "gather_perf",
+      "hypercube_perf",
+      "reduce_perf",
+      "reduce_scatter_perf",
+      "scatter_perf",
+      "sendrecv_perf"
+    ],
+    "nccl_perf_real_binary_count": 10,
+    "nccl_tests_source": "performance_tools/src/nccl-tests",
+    "p2pBandwidthLatencyTest": "performance_tools/cuda_samples/bin/p2pBandwidthLatencyTest",
+    "p2pBandwidthLatencyTest_source": "NVIDIA/cuda-samples v12.4, Samples/5_Domain_Specific/p2pBandwidthLatencyTest",
+    "nvbandwidth": "optional; perf-check reports OK optional-missing when absent",
+    "nvbandwidth_source": "performance_tools/src/nvbandwidth, NVIDIA/nvbandwidth v0.9"
+  },
+  "interaction_overlay": {
+    "path": "repo_overlay/interaction",
+    "file_count": 100,
+    "h200_accelerate_config": true,
+    "h200_deepspeed_config": true,
+    "perf_py": true
+  },
+  "imports_after_fix": {
+    "torch": "2.6.0+cu124",
+    "flash_attn": "2.7.4.post1",
+    "accelerate": "1.5.2",
+    "transformers": "5.2.0",
+    "huggingface_hub": "1.15.0",
+    "transformers.Qwen3_5ForConditionalGeneration": "ok",
+    "transformers.Qwen3VLForConditionalGeneration": "ok",
+    "diffusers": "0.38.0",
+    "decord": "0.6.0",
+    "pytorch3d": "0.7.6",
+    "rich": "ok",
+    "deepspeed": "installed 0.16.9"
+  },
+  "torch": {
+    "cuda": "12.4",
+    "cuda_available_cpu_zone": false
+  },
+  "reports": [
+    "reports/cpu_check_after_flash_attn.txt",
+    "reports/offline_check_script_latest.txt",
+    "reports/gpu_oneclick_fix_skip_check_latest.txt",
+    "reports/install_perf_tools_latest.txt",
+    "reports/perf_check_cpu_latest.txt",
+    "reports/install_offline_skip_check_latest.txt",
+    "reports/public_env_scan.txt",
+    "reports/target_write_status.txt",
+    "reports/tmux_ldd.txt",
+    "performance_tools/reports/perf_tools_packaged.txt",
+    "reports/h200_offline_packaging_report.txt"
+  ],
+  "install": "scripts/install_offline.sh",
+  "gpu_oneclick_fix": "scripts/gpu_oneclick_fix.sh",
+  "build_optional_nvbandwidth": "scripts/build_optional_nvbandwidth.sh",
+  "check": "scripts/check_offline_env.sh",
+  "activate": "scripts/activate_offline_env.sh"
+}

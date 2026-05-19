@@ -1,0 +1,232 @@
+{
+  "models": {
+    "qwen35_0_8b": {
+      "label": "Qwen3.5 0.8B base, no action pretrain",
+      "path": "playground/Pretrained_models/Qwen3.5-0.8B"
+    },
+    "qwen35_2b": {
+      "label": "Qwen3.5 2B base, no action pretrain",
+      "path": "playground/Pretrained_models/Qwen3.5-2B"
+    },
+    "qwen35_4b": {
+      "label": "Qwen3.5 4B base, no action pretrain",
+      "path": "playground/Pretrained_models/Qwen3.5-4B"
+    },
+    "qwen35_9b": {
+      "label": "Qwen3.5 9B base, no action pretrain",
+      "path": "playground/Pretrained_models/Qwen3.5-9B"
+    },
+    "qwen3vl_4b": {
+      "label": "Qwen3-VL 4B Instruct base",
+      "path": "playground/Pretrained_models/Qwen3-VL-4B-Instruct"
+    },
+    "qwen3vl_4b_action": {
+      "label": "Qwen3-VL 4B Action checkpoint",
+      "path": "playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
+    },
+    "cosmos_predict2": {
+      "label": "Cosmos-Predict2 2B Video2World",
+      "path": "playground/Pretrained_models/nvidia/Cosmos-Predict2-2B-Video2World"
+    }
+  },
+  "frameworks": {
+    "QwenPI": {"label": "Qwen + PI flow-matching action head", "default_model": "qwen35_0_8b"},
+    "QwenOFT": {"label": "Qwen + OFT/MLP action head", "default_model": "qwen3vl_4b"},
+    "QwenGR00T": {"label": "Qwen + GR00T flow-matching head", "default_model": "qwen3vl_4b"},
+    "QwenFast": {"label": "Qwen + FAST token action head", "default_model": "qwen3vl_4b_action"},
+    "QwenAdapter": {"label": "Qwen + VLA adapter action head", "default_model": "qwen3vl_4b"},
+    "CosmoPredict2PI": {"label": "Cosmos Predict2 + PI action head", "default_model": "cosmos_predict2"},
+    "CosmoPredict2OFT": {"label": "Cosmos Predict2 + OFT action head", "default_model": "cosmos_predict2"},
+    "CosmoPredict2GR00T": {"label": "Cosmos Predict2 + GR00T action head", "default_model": "cosmos_predict2"}
+  },
+  "train_presets": {
+    "libero_vla": {
+      "label": "LIBERO VLA training",
+      "mode": "vla",
+      "trainer_script": "starVLA/training/train_starvla.py",
+      "config_yaml": "examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
+      "framework": "QwenPI",
+      "model": "qwen35_0_8b",
+      "data_root": "playground/Datasets/LEROBOT_LIBERO_DATA",
+      "data_mix": "libero_all",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_libero",
+      "vla_batch_size": 16,
+      "vlm_batch_size": 2,
+      "max_train_steps": 80000,
+      "save_interval": 100,
+      "eval_interval": 100,
+      "logging_frequency": 100,
+      "wandb_project": "starVLA_Libero",
+      "wandb_entity": "your_wandb_entity"
+    },
+    "libero_cotrain": {
+      "label": "LIBERO VLA+VLM cotrain",
+      "mode": "cotrain",
+      "trainer_script": "starVLA/training/train_starvla_cotrain.py",
+      "config_yaml": "examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
+      "framework": "QwenFast",
+      "model": "qwen3vl_4b_action",
+      "data_root": "playground/Datasets/LEROBOT_LIBERO_DATA",
+      "data_mix": "libero_all",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_libero_cotrain",
+      "vla_batch_size": 2,
+      "vlm_batch_size": 2,
+      "max_train_steps": 100000,
+      "save_interval": 100,
+      "eval_interval": 1000,
+      "logging_frequency": 10,
+      "wandb_project": "starVLA_Cotrain",
+      "wandb_entity": "your_wandb_entity"
+    },
+    "vlm_only": {
+      "label": "VLM-only post-training",
+      "mode": "vlm",
+      "trainer_script": "starVLA/training/train_starvlm.py",
+      "config_yaml": "examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
+      "framework": "QwenFast",
+      "model": "qwen3vl_4b_action",
+      "vlm_dataset": "sharegpt4v_coco",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_starvlm",
+      "vla_batch_size": 2,
+      "vlm_batch_size": 2,
+      "max_train_steps": 100000,
+      "save_interval": 100,
+      "eval_interval": 1000,
+      "logging_frequency": 10,
+      "wandb_project": "starVLA_VLM",
+      "wandb_entity": "your_wandb_entity"
+    },
+    "calvin_vla": {
+      "label": "Calvin ABC VLA training",
+      "mode": "vla",
+      "trainer_script": "starVLA/training/train_starvla.py",
+      "config_yaml": "examples/calvin/train_files/starvla_train_calvin.yaml",
+      "framework": "QwenPI",
+      "model": "qwen35_0_8b",
+      "data_root": "playground/Datasets/calvin",
+      "data_mix": "calvin_task_ABC",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_calvin",
+      "vla_batch_size": 4,
+      "vlm_batch_size": 2,
+      "max_train_steps": 30000,
+      "save_interval": 100,
+      "eval_interval": 100,
+      "logging_frequency": 100,
+      "wandb_project": "starVLA_Calvin",
+      "wandb_entity": "your_wandb_entity"
+    },
+    "robotwin_vla": {
+      "label": "RoboTwin VLA training",
+      "mode": "vla",
+      "trainer_script": "starVLA/training/train_starvla.py",
+      "config_yaml": "examples/Robotwin/train_files/starvla_cotrain_robotwin_abs.yaml",
+      "framework": "QwenOFT",
+      "model": "qwen3vl_4b",
+      "data_root": "playground/Datasets/RoboTwin",
+      "data_mix": "robotwin_all_50",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_robotwin",
+      "vla_batch_size": 4,
+      "vlm_batch_size": 2,
+      "max_train_steps": 150000,
+      "save_interval": 100,
+      "eval_interval": 1000,
+      "logging_frequency": 100,
+      "wandb_project": "starVLA_Robotwin",
+      "wandb_entity": "your_wandb_entity"
+    },
+    "bridge_vla": {
+      "label": "Bridge OXE VLA training",
+      "mode": "vla",
+      "trainer_script": "starVLA/training/train_starvla.py",
+      "config_yaml": "examples/SimplerEnv/train_files/starvla_cotrain_oxe.yaml",
+      "framework": "QwenGR00T",
+      "model": "qwen3vl_4b_action",
+      "data_root": "playground/Datasets/OXE_LEROBOT_DATASET",
+      "data_mix": "bridge",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_bridge",
+      "vla_batch_size": 16,
+      "vlm_batch_size": 2,
+      "max_train_steps": 100000,
+      "save_interval": 100,
+      "eval_interval": 1000,
+      "logging_frequency": 100,
+      "wandb_project": "starVLA_simplerEnv",
+      "wandb_entity": "your_wandb_entity"
+    },
+    "robocasa365_smoke": {
+      "label": "RoboCasa365 smoke training",
+      "optional": true,
+      "mode": "vla",
+      "trainer_script": "starVLA/training/train_starvla.py",
+      "config_yaml": "examples/Robocasa_365/train_files/starvla_qwenoft_robocasa365.yaml",
+      "framework": "QwenOFT",
+      "model": "qwen3vl_4b_action",
+      "data_root": "playground/Datasets/robocasa365",
+      "data_mix": "robocasa365_open_drawer_target_human",
+      "run_root_dir": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints",
+      "run_id_prefix": "interactive_robocasa365",
+      "vla_batch_size": 4,
+      "vlm_batch_size": 2,
+      "max_train_steps": 100,
+      "save_interval": 100,
+      "eval_interval": 1000,
+      "logging_frequency": 5,
+      "wandb_project": "starVLA_robocasa365",
+      "wandb_entity": "your_wandb_entity"
+    }
+  },
+  "eval_presets": {
+    "libero": {
+      "label": "LIBERO websocket evaluation",
+      "default_port": 6694,
+      "default_task_suite": "libero_goal",
+      "default_trials": 50,
+      "client_kind": "libero"
+    },
+    "calvin": {
+      "label": "Calvin websocket evaluation",
+      "default_port": 5694,
+      "default_dataset_path": "/inspire/qb-ilm2/project/26summer-camp-10/public/inspire_shared/calvin_d_d/validation",
+      "default_calvin_config_path": "playground/Code/calvin/calvin_models/conf",
+      "default_eval_sequences_path": "examples/calvin/eval_files/eval_sequences.json",
+      "default_num_sequences": 1000,
+      "default_max_steps_per_task": 360,
+      "default_replicas_per_gpu": 2,
+      "h200_saturated_replicas_per_gpu": 3,
+      "default_render_backend": "auto",
+      "client_kind": "script",
+      "server_script": "examples/calvin/eval_files/run_policy_server.sh",
+      "client_script": "examples/calvin/eval_files/eval_calvin.sh"
+    },
+    "robotwin": {
+      "label": "RoboTwin websocket evaluation",
+      "default_port": 5694,
+      "client_kind": "robotwin",
+      "server_script": "examples/Robotwin/eval_files/run_policy_server.sh",
+      "client_script": "examples/Robotwin/eval_files/eval.sh"
+    },
+    "robocasa365": {
+      "label": "RoboCasa365 evaluation",
+      "default_port": 5694,
+      "client_kind": "script",
+      "server_script": "examples/Robocasa_365/eval_files/run_eval.sh",
+      "client_script": "examples/Robocasa_365/eval_files/run_eval.sh"
+    }
+  },
+  "required_paths": [
+    "bar/activate_starvla_no_proxy.sh",
+    "env/starvla-py310/bin/python",
+    "playground/Pretrained_models/fast",
+    "playground/Datasets/LEROBOT_LIBERO_DATA",
+    "playground/Datasets/calvin",
+    "playground/Datasets/RoboTwin",
+    "playground/Pretrained_models/Qwen3.5-0.8B",
+    "playground/Pretrained_models/Qwen3-VL-4B-Instruct"
+  ]
+}

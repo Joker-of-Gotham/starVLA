@@ -1,0 +1,97 @@
+Public env scan at 2026-05-19T02:33:34Z
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/calvin_venv/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/calvin_venv/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/starvla/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/starvla/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/starvla_backup/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/starvla_backup/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/zxy_robocasa/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/zxy_robocasa/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/pkgs/python-3.10.20-h741d88c_0/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/pkgs/python-3.10.20-h741d88c_0/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/pkgs/python-3.11.15-hd63d673_0_cpython/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/pkgs/python-3.11.15-hd63d673_0_cpython/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/pkgs/python-3.13.13-hb7b561f_100_cp313/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/pkgs/python-3.13.13-hb7b561f_100_cp313/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/pkgs/python-3.8.20-he870216_0/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/pkgs/python-3.8.20-he870216_0/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/six/env/starVLA/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/six/env/starVLA/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/envs/starVLA/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/envs/starVLA/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/envs/starVLA2/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/envs/starVLA2/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/pkgs/python-3.10.20-h741d88c_0/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/pkgs/python-3.10.20-h741d88c_0/bin/python3
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/pkgs/python-3.13.13-hb7b561f_100_cp313/bin/python
+/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/pkgs/python-3.13.13-hb7b561f_100_cp313/bin/python3
+
+=== /inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/envs/starVLA/bin/python ===
+{
+  "python": "3.10.20",
+  "torch": "2.6.0+cu124",
+  "flash_attn": "IMPORT_FAIL: ImportError('/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/envs/starVLA/lib/python3.10/site-packages/flash_attn_2_cuda.cpython-310-x86_64-linux-gnu.so: undefined symbol: _ZN3c105ErrorC2ENS_14SourceLocationENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE')",
+  "accelerate": "1.5.2",
+  "transformers": "4.57.0",
+  "diffusers": "0.38.0",
+  "decord": "0.6.0",
+  "pytorch3d": "0.7.6",
+  "rich": "ok"
+}
+
+=== /inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/envs/starVLA2/bin/python ===
+{
+  "python": "3.10.20",
+  "torch": "2.6.0+cu124",
+  "flash_attn": "IMPORT_FAIL: ImportError('/inspire/qb-ilm2/project/26summer-camp-10/public/two/miniconda/envs/starVLA2/lib/python3.10/site-packages/flash_attn_2_cuda.cpython-310-x86_64-linux-gnu.so: undefined symbol: _ZN3c105ErrorC2ENS_14SourceLocationENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE')",
+  "accelerate": "1.5.2",
+  "transformers": "5.2.0",
+  "diffusers": "0.38.0",
+  "decord": "0.6.0",
+  "pytorch3d": "0.7.6",
+  "rich": "ok"
+}
+
+=== /inspire/qb-ilm2/project/26summer-camp-10/public/six/env/starVLA/bin/python ===
+{
+  "python": "3.10.20",
+  "torch": "2.6.0+cu124",
+  "flash_attn": "MISSING",
+  "accelerate": "1.5.2",
+  "transformers": "4.57.0",
+  "diffusers": "0.38.0",
+  "decord": "0.6.0",
+  "pytorch3d": "0.7.6",
+  "rich": "ok"
+}
+
+=== /inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/starvla/bin/python ===
+{
+  "python": "3.10.20",
+  "torch": "2.6.0+cu124",
+  "flash_attn": "MISSING",
+  "accelerate": "1.5.2",
+  "transformers": "4.57.6",
+  "diffusers": "0.38.0",
+  "decord": "0.6.0",
+  "pytorch3d": "0.7.6",
+  "rich": "ok"
+}
+
+=== /inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/starvla_backup/bin/python ===
+{
+  "python": "3.10.20",
+  "torch": "2.6.0+cu124",
+  "flash_attn": "MISSING",
+  "accelerate": "1.5.2",
+  "transformers": "5.8.0",
+  "diffusers": "0.38.0",
+  "decord": "0.6.0",
+  "pytorch3d": "0.7.6",
+  "rich": "ok"
+}
+

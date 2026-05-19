@@ -1,0 +1,179 @@
+repo=/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA
+env=env/starvla-py310
+python=/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/env/starvla-py310/bin/python
+tmux=/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/envSet/starvla_env/system_tools/tmux/bin/tmux
+tmux 3.4
+all_reduce_perf=/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/envSet/starvla_env/performance_tools/bin/all_reduce_perf
+{
+  "python": "3.10.20",
+  "executable": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/env/starvla-py310/bin/python",
+  "proxy_clean": true,
+  "torch": "2.6.0+cu124",
+  "flash_attn": "2.7.4.post1",
+  "accelerate": "1.5.2",
+  "transformers": "5.2.0",
+  "diffusers": "0.38.0",
+  "decord": "0.6.0",
+  "pytorch3d": "0.7.6",
+  "rich": "ok",
+  "omegaconf": "2.3.0",
+  "transformers.Qwen3_5ForConditionalGeneration": "ok",
+  "transformers.Qwen3VLForConditionalGeneration": "ok",
+  "torch_cuda": "12.4",
+  "cuda_available": false,
+  "gpu_count": 0,
+  "interaction/core/perf.py": true,
+  "interaction/config/accelerate_h200_zero2.yaml": true,
+  "interaction/config/ds_h200_zero2.json": true,
+  "perf_profile_import": "h200_8gpu",
+  "perf_accelerate_config": "/inspire/qb-ilm2/project/26summer-camp-10/26220447/starVLA/interaction/config/accelerate_h200_zero2.yaml"
+}
+FAST ok
+OFT/MLP ok
+Total number of DiT parameters:  9178400
+GR00T ok
+Total number of DiT parameters:  149184
+PI/LayerwiseFM ok
+│ transformers │ ok 5.2.0                                         │
+│ triton       │ ok 3.2.0                                         │
+└──────────────┴──────────────────────────────────────────────────┘
+                 Runtime capabilities                 
+┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ capability ┃ status                                ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Qwen3-VL   │ ok ok Qwen3VLForConditionalGeneration │
+│ Qwen3.5    │ ok ok Qwen3_5ForConditionalGeneration │
+└────────────┴───────────────────────────────────────┘
+                        Required paths                        
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ path                                              ┃ exists ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ bar/activate_starvla_no_proxy.sh                  │ OK     │
+│ env/starvla-py310/bin/python                      │ OK     │
+│ playground/Pretrained_models/fast                 │ OK     │
+│ playground/Datasets/LEROBOT_LIBERO_DATA           │ OK     │
+│ playground/Datasets/calvin                        │ OK     │
+│ playground/Datasets/RoboTwin                      │ OK     │
+│ playground/Pretrained_models/Qwen3.5-0.8B         │ OK     │
+│ playground/Pretrained_models/Qwen3-VL-4B-Instruct │ OK     │
+└───────────────────────────────────────────────────┴────────┘
+                                 Model presets                                  
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ model             ┃ label                  ┃ path                   ┃ exists ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ qwen35_0_8b       │ Qwen3.5 0.8B base, no  │ playground/Pretrained_ │ OK     │
+│                   │ action pretrain        │ models/Qwen3.5-0.8B    │        │
+│ qwen35_2b         │ Qwen3.5 2B base, no    │ playground/Pretrained_ │ OK     │
+│                   │ action pretrain        │ models/Qwen3.5-2B      │        │
+│ qwen35_4b         │ Qwen3.5 4B base, no    │ playground/Pretrained_ │ OK     │
+│                   │ action pretrain        │ models/Qwen3.5-4B      │        │
+│ qwen35_9b         │ Qwen3.5 9B base, no    │ playground/Pretrained_ │ OK     │
+│                   │ action pretrain        │ models/Qwen3.5-9B      │        │
+│ qwen3vl_4b        │ Qwen3-VL 4B Instruct   │ playground/Pretrained_ │ OK     │
+│                   │ base                   │ models/Qwen3-VL-4B-Ins │        │
+│                   │                        │ truct                  │        │
+│ qwen3vl_4b_action │ Qwen3-VL 4B Action     │ playground/Pretrained_ │ OK     │
+│                   │ checkpoint             │ models/Qwen3-VL-4B-Ins │        │
+│                   │                        │ truct-Action           │        │
+│ cosmos_predict2   │ Cosmos-Predict2 2B     │ playground/Pretrained_ │ OK     │
+│                   │ Video2World            │ models/nvidia/Cosmos-P │        │
+│                   │                        │ redict2-2B-Video2World │        │
+└───────────────────┴────────────────────────┴────────────────────────┴────────┘
+                                Dataset presets                                 
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ preset            ┃ mix                    ┃ root                   ┃ exists ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ libero_vla        │ libero_all             │ playground/Datasets/LE │ OK     │
+│                   │                        │ ROBOT_LIBERO_DATA      │        │
+│ libero_cotrain    │ libero_all             │ playground/Datasets/LE │ OK     │
+│                   │                        │ ROBOT_LIBERO_DATA      │        │
+│ calvin_vla        │ calvin_task_ABC_D      │ playground/Datasets/ca │ OK     │
+│                   │                        │ lvin                   │        │
+│ robotwin_vla      │ robotwin_all_50        │ playground/Datasets/Ro │ OK     │
+│                   │                        │ boTwin                 │        │
+│ bridge_vla        │ bridge                 │ playground/Datasets/OX │ OK     │
+│                   │                        │ E_LEROBOT_DATASET      │        │
+│ robocasa365_smoke │ robocasa365_open_drawe │ playground/Datasets/ro │ FAIL   │
+│                   │ r_target_human         │ bocasa365              │        │
+└───────────────────┴────────────────────────┴────────────────────────┴────────┘
+                    Action heads                     
+┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ status ┃ tail                                     ┃
+┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ OK     │ FAST ok                                  │
+│        │ OFT/MLP ok                               │
+│        │ Total number of DiT parameters:  9178400 │
+│        │ GR00T ok                                 │
+│        │ Total number of DiT parameters:  149184  │
+│        │ PI/LayerwiseFM ok                        │
+│        │ VLA_Adapter ok                           │
+└────────┴──────────────────────────────────────────┘
+Environment check passed with warnings.
+- default checkpoint_root is not writable; pass --run-root-dir to a writable 
+path before training
+- desired interaction runs_root is not writable; metadata will use the fallback 
+runs root
+- missing optional dataset preset roots: robocasa365_smoke
+                           GPU Performance Inventory                            
+┏━━━━━┳━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━━┳━━━━┳━━━━━┳━━━━━━┓
+┃     ┃    ┃      ┃      ┃      ┃      ┃      ┃ powe ┃ power ┃    ┃     ┃ psta ┃
+┃ sel ┃ id ┃ name ┃ type ┃ used ┃ free ┃ util ┃ r    ┃ %     ┃ sm ┃ mem ┃ te   ┃
+┡━━━━━╇━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━━╇━━━━╇━━━━━╇━━━━━━┩
+│ -   │ -  │ no   │ -    │ -    │ -    │ -    │ -    │ -     │ -  │ -   │ -    │
+│     │    │ GPU  │      │      │      │      │      │       │    │     │      │
+│     │    │ dete │      │      │      │      │      │       │    │     │      │
+│     │    │ cted │      │      │      │      │      │       │    │     │      │
+└─────┴────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┴────┴─────┴──────┘
+                              Performance Profile                               
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ check                   ┃ status   ┃ detail                                  ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ perf_profile            │ balanced │ Using balanced NCCL defaults;           │
+│                         │          │ topology-sensitive transport choices    │
+│                         │          │ are left to NCCL.                       │
+│ accelerate_config       │ OK       │ /inspire/qb-ilm2/project/26summer-camp- │
+│                         │          │ 10/26220447/starVLA/starVLA/config/deep │
+│                         │          │ seeds/deepspeed_zero2.yaml              │
+│ selected_gpus           │ 0        │ -                                       │
+│ selected_h200           │ 0        │ all selected GPUs should be H200 for    │
+│                         │          │ the H200 profile                        │
+│ free_memory_check       │ OK       │ GPUs below 120GB free before launch: -  │
+│ prelaunch_gpu_busy      │ OK       │ GPUs above 10% util before launch: -    │
+│ prelaunch_power_idle    │ OK       │ low power before launch is normal if    │
+│                         │          │ idle: -                                 │
+│ topology_visible        │ OK       │ NVLink not detected in nvidia-smi topo  │
+│ all_reduce_perf         │ OK       │ available                               │
+│ p2pBandwidthLatencyTest │ OK       │ available                               │
+│ nvbandwidth             │ OK       │ optional NVIDIA nvbandwidth not found;  │
+│                         │          │ install it only for deeper              │
+│                         │          │ memory/interconnect benchmarking        │
+└─────────────────────────┴──────────┴─────────────────────────────────────────┘
+                       NCCL / Torch Env                        
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
+┃ env                              ┃ value ┃ mode             ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
+│ NCCL_ASYNC_ERROR_HANDLING        │ 1     │ default-if-unset │
+│ NCCL_BLOCKING_WAIT               │ 0     │ default-if-unset │
+│ NCCL_DEBUG                       │ WARN  │ default-if-unset │
+│ NCCL_SET_THREAD_NAME             │ 1     │ default-if-unset │
+│ NCCL_SOCKET_RETRY_CNT            │ 34    │ default-if-unset │
+│ NCCL_SOCKET_RETRY_SLEEP_MSEC     │ 100   │ default-if-unset │
+│ TORCH_NCCL_ASYNC_ERROR_HANDLING  │ 1     │ default-if-unset │
+│ TORCH_NCCL_BLOCKING_WAIT         │ 0     │ default-if-unset │
+│ TORCH_NCCL_ENABLE_MONITORING     │ 1     │ default-if-unset │
+│ TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC │ 600   │ default-if-unset │
+│ TORCH_NCCL_HIGH_PRIORITY         │ 1     │ default-if-unset │
+│ TORCH_NCCL_USE_COMM_NONBLOCKING  │ 1     │ default-if-unset │
+└──────────────────────────────────┴───────┴──────────────────┘
+                                   Topology                                    
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ item                    ┃ value                                             ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ returncode              │ 127                                               │
+│ nvidia-smi topo -m tail │ FileNotFoundError(2, 'No such file or directory') │
+└─────────────────────────┴───────────────────────────────────────────────────┘
+Bandwidth validation commands:
+CUDA_VISIBLE_DEVICES=<ids> all_reduce_perf -b 8 -e 16G -f 2 -g 1
+CUDA_VISIBLE_DEVICES=<ids> p2pBandwidthLatencyTest
+CUDA_VISIBLE_DEVICES=<ids> nvbandwidth
+Offline environment check passed.

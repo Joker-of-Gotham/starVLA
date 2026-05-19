@@ -1,0 +1,62 @@
+                           GPU Performance Inventory                            
+┏━━━━━┳━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━━┳━━━━┳━━━━━┳━━━━━━┓
+┃     ┃    ┃      ┃      ┃      ┃      ┃      ┃ powe ┃ power ┃    ┃     ┃ psta ┃
+┃ sel ┃ id ┃ name ┃ type ┃ used ┃ free ┃ util ┃ r    ┃ %     ┃ sm ┃ mem ┃ te   ┃
+┡━━━━━╇━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━━╇━━━━╇━━━━━╇━━━━━━┩
+│ -   │ -  │ no   │ -    │ -    │ -    │ -    │ -    │ -     │ -  │ -   │ -    │
+│     │    │ GPU  │      │      │      │      │      │       │    │     │      │
+│     │    │ dete │      │      │      │      │      │       │    │     │      │
+│     │    │ cted │      │      │      │      │      │       │    │     │      │
+└─────┴────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┴────┴─────┴──────┘
+                              Performance Profile                               
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ check                   ┃ status   ┃ detail                                  ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ perf_profile            │ balanced │ Using balanced NCCL defaults;           │
+│                         │          │ topology-sensitive transport choices    │
+│                         │          │ are left to NCCL.                       │
+│ accelerate_config       │ OK       │ /inspire/qb-ilm2/project/26summer-camp- │
+│                         │          │ 10/26220447/starVLA/starVLA/config/deep │
+│                         │          │ seeds/deepspeed_zero2.yaml              │
+│ selected_gpus           │ 0        │ -                                       │
+│ selected_h200           │ 0        │ all selected GPUs should be H200 for    │
+│                         │          │ the H200 profile                        │
+│ free_memory_check       │ OK       │ GPUs below 120GB free before launch: -  │
+│ prelaunch_gpu_busy      │ OK       │ GPUs above 10% util before launch: -    │
+│ prelaunch_power_idle    │ OK       │ low power before launch is normal if    │
+│                         │          │ idle: -                                 │
+│ topology_visible        │ OK       │ NVLink not detected in nvidia-smi topo  │
+│ all_reduce_perf         │ OK       │ available                               │
+│ p2pBandwidthLatencyTest │ OK       │ available                               │
+│ nvbandwidth             │ OK       │ optional NVIDIA nvbandwidth not found;  │
+│                         │          │ install it only for deeper              │
+│                         │          │ memory/interconnect benchmarking        │
+└─────────────────────────┴──────────┴─────────────────────────────────────────┘
+                       NCCL / Torch Env                        
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
+┃ env                              ┃ value ┃ mode             ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
+│ NCCL_ASYNC_ERROR_HANDLING        │ 1     │ default-if-unset │
+│ NCCL_BLOCKING_WAIT               │ 0     │ default-if-unset │
+│ NCCL_DEBUG                       │ WARN  │ default-if-unset │
+│ NCCL_SET_THREAD_NAME             │ 1     │ default-if-unset │
+│ NCCL_SOCKET_RETRY_CNT            │ 34    │ default-if-unset │
+│ NCCL_SOCKET_RETRY_SLEEP_MSEC     │ 100   │ default-if-unset │
+│ TORCH_NCCL_ASYNC_ERROR_HANDLING  │ 1     │ default-if-unset │
+│ TORCH_NCCL_BLOCKING_WAIT         │ 0     │ default-if-unset │
+│ TORCH_NCCL_ENABLE_MONITORING     │ 1     │ default-if-unset │
+│ TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC │ 600   │ default-if-unset │
+│ TORCH_NCCL_HIGH_PRIORITY         │ 1     │ default-if-unset │
+│ TORCH_NCCL_USE_COMM_NONBLOCKING  │ 1     │ default-if-unset │
+└──────────────────────────────────┴───────┴──────────────────┘
+                                   Topology                                    
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ item                    ┃ value                                             ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ returncode              │ 127                                               │
+│ nvidia-smi topo -m tail │ FileNotFoundError(2, 'No such file or directory') │
+└─────────────────────────┴───────────────────────────────────────────────────┘
+Bandwidth validation commands:
+CUDA_VISIBLE_DEVICES=<ids> all_reduce_perf -b 8 -e 16G -f 2 -g 1
+CUDA_VISIBLE_DEVICES=<ids> p2pBandwidthLatencyTest
+CUDA_VISIBLE_DEVICES=<ids> nvbandwidth
