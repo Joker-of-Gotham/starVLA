@@ -33,7 +33,7 @@ from transformers import AutoProcessor, get_scheduler
 # Local Modules
 from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
-from starVLA.training.trainer_utils.checkpointing import cfg_bool, cfg_str, checkpoint_summary, latest_state_checkpoint, parse_step_from_path, update_latest_state_link, update_topk_checkpoints
+from starVLA.training.trainer_utils.checkpointing import atomic_checkpoint_write, cfg_bool, cfg_str, checkpoint_summary, latest_state_checkpoint, parse_step_from_path, update_latest_state_link, update_topk_checkpoints
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.policy_runtime import PolicyRuntime
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
@@ -254,10 +254,10 @@ class VLAMTrainer(TrainerUtils):
                 from safetensors.torch import save_file
 
                 weight_checkpoint = checkpoint_path + "_model.safetensors"
-                save_file(state_dict, weight_checkpoint)
+                atomic_checkpoint_write(weight_checkpoint, lambda tmp: save_file(state_dict, tmp))
             elif save_format == "pt":
                 weight_checkpoint = checkpoint_path + "_pytorch_model.pt"
-                torch.save(state_dict, weight_checkpoint)
+                atomic_checkpoint_write(weight_checkpoint, lambda tmp: torch.save(state_dict, tmp))
             else:
                 raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
 
@@ -484,9 +484,9 @@ class VLAMTrainer(TrainerUtils):
             if save_format == "safetensors":
                 from safetensors.torch import save_file
 
-                save_file(state_dict, os.path.join(final_checkpoint, "model.safetensors"))
+                atomic_checkpoint_write(os.path.join(final_checkpoint, "model.safetensors"), lambda tmp: save_file(state_dict, tmp))
             elif save_format == "pt":
-                torch.save(state_dict, os.path.join(final_checkpoint, "pytorch_model.pt"))
+                atomic_checkpoint_write(os.path.join(final_checkpoint, "pytorch_model.pt"), lambda tmp: torch.save(state_dict, tmp))
             else:
                 raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
             logger.info(f"Training complete. Final model saved at {final_checkpoint}")

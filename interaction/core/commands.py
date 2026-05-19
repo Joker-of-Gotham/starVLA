@@ -342,7 +342,18 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
     experiment_group = spec.experiment_group or experiment_group_name(spec.model, spec.framework, dataset)
     checkpoint_root = spec.run_root_dir if spec.run_root_dir is not None else preset.get("run_root_dir", str(DEFAULT_CHECKPOINT_ROOT))
     run_root_dir = str(Path(checkpoint_root) / experiment_group)
-    freeze_modules = spec.freeze_modules if spec.freeze_modules is not None else _default_freeze_modules(spec.framework, spec.model)
+    freeze_modules = (
+        spec.freeze_modules
+        if spec.freeze_modules is not None
+        else _default_freeze_modules(
+            spec.framework,
+            spec.model,
+            mode=mode,
+            training_policies=spec.training_policies,
+            structure_policies=spec.structure_policies,
+            resume=spec.resume,
+        )
+    )
     max_train_steps = spec.max_train_steps if spec.max_train_steps is not None else int(preset["max_train_steps"])
     vla_batch = spec.vla_batch_size if spec.vla_batch_size is not None else int(preset.get("vla_batch_size", 1))
     vlm_batch = spec.vlm_batch_size if spec.vlm_batch_size is not None else int(preset.get("vlm_batch_size", 1))
@@ -575,10 +586,22 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
     return "\n".join(lines) + "\n", meta
 
 
-def _default_freeze_modules(framework: str, model_key: str) -> str:
+def _default_freeze_modules(
+    framework: str,
+    model_key: str,
+    *,
+    mode: str,
+    training_policies: list[str],
+    structure_policies: list[str],
+    resume: bool,
+) -> str:
     text = f"{framework} {model_key}".lower()
     if "cosmo" in text or "cosmos" in text:
         return "backbone"
+    policy_ids = set(training_policies) | set(structure_policies)
+    if "S01" in policy_ids and mode in {"vla", "cotrain"} and not resume:
+        if any(token in text for token in ("qwen", "gemma", "molmo")):
+            return "qwen_vl_interface"
     return ""
 
 

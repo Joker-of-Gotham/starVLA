@@ -699,8 +699,18 @@ def command_train(args: argparse.Namespace) -> int:
         nccl_p2p_level=None if args.nccl_p2p_level == "auto" else args.nccl_p2p_level,
         env_overrides=args.nccl_env or [],
     )
-    perf_rows = [[name, status_markup(status) if isinstance(status, bool) else status, detail] for name, status, detail in perf_preflight(spec.gpus, perf_settings)]
+    raw_perf_rows = perf_preflight(spec.gpus, perf_settings)
+    perf_rows = [[name, status_markup(status) if isinstance(status, bool) else status, detail] for name, status, detail in raw_perf_rows]
     print_table("Performance Preflight", ["check", "status", "detail"], perf_rows)
+    hard_perf_blockers = {
+        "free_memory_check",
+        "compute_process_check",
+    }
+    failed_perf = [row for row in raw_perf_rows if row[0] in hard_perf_blockers and row[1] is False]
+    if failed_perf:
+        cprint("[red]Performance preflight failed.[/red] Selected GPU(s) are already occupied or do not have enough free memory.")
+        cprint("Stop the existing job, choose different GPUs, or use `bash interaction/bin/starvla-force-stop.sh <session>` for managed StarVLA sessions.")
+        return 4
     if not tmux_available():
         cprint("[red]tmux is required for managed launches but is not available.[/red]")
         return 2

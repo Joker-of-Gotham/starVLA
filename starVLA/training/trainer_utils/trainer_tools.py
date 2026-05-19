@@ -14,6 +14,7 @@ import torch.distributed as dist
 from transformers import get_scheduler
 
 from accelerate.logging import get_logger
+from starVLA.training.trainer_utils.checkpointing import is_valid_weight_checkpoint
 
 logger = get_logger(__name__)
 
@@ -559,6 +560,7 @@ class TrainerUtils:
             f for f in os.listdir(checkpoint_dir) 
             if re.match(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$", f)
             and os.path.isfile(os.path.join(checkpoint_dir, f))  # ensure it is a file
+            and is_valid_weight_checkpoint(os.path.join(checkpoint_dir, f))
         ]
 
         if not checkpoints:

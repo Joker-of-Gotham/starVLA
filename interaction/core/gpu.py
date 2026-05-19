@@ -45,6 +45,30 @@ class GPUInfo:
         return "H200" in self.name.upper()
 
 
+@dataclass(frozen=True)
+class GPUProcessInfo:
+    gpu_uuid: str
+    gpu_index: int | None
+    pid: int
+    process_name: str
+    used_memory_mb: int
+
+
+def nvidia_smi_binary() -> str | None:
+    found = shutil.which("nvidia-smi")
+    if found:
+        return found
+    for candidate in (
+        "/usr/bin/nvidia-smi",
+        "/usr/local/bin/nvidia-smi",
+        "/usr/local/nvidia/bin/nvidia-smi",
+        "/opt/nvidia/bin/nvidia-smi",
+    ):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def detect_gpus() -> list[GPUInfo]:
     extended_cmd = [
         "nvidia-smi",
@@ -98,8 +122,12 @@ def detect_gpus() -> list[GPUInfo]:
 
 
 def _run_nvidia_smi(cmd: list[str]) -> subprocess.CompletedProcess[str] | None:
+    binary = nvidia_smi_binary()
+    if not binary:
+        return None
+    command = [binary, *cmd[1:]]
     try:
-        return subprocess.run(cmd, check=True, text=True, capture_output=True, timeout=10)
+        return subprocess.run(command, check=True, text=True, capture_output=True, timeout=10)
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
 
@@ -119,10 +147,17 @@ def _float_or_none(value: str) -> float | None:
 
 
 def command_exists(command: str) -> bool:
+    if command == "nvidia-smi":
+        return nvidia_smi_binary() is not None
     return shutil.which(command) is not None
 
 
 def run_text_command(command: list[str], timeout: int = 10) -> tuple[int, str]:
+    if command and command[0] == "nvidia-smi":
+        binary = nvidia_smi_binary()
+        if not binary:
+            return 127, "nvidia-smi not found"
+        command = [binary, *command[1:]]
     try:
         proc = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
     except FileNotFoundError as exc:
@@ -140,6 +175,40 @@ def gpu_topology() -> dict[str, str | int]:
 def gpu_nvlink_status() -> dict[str, str | int]:
     rc, out = run_text_command(["nvidia-smi", "nvlink", "-s"], timeout=10)
     return {"returncode": rc, "output": out[-12000:]}
+
+
+def detect_compute_processes() -> list[GPUProcessInfo]:
+    gpus = detect_gpus()
+    uuid_to_index = {gpu.uuid: gpu.index for gpu in gpus}
+    proc = _run_nvidia_smi(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=gpu_uuid,pid,process_name,used_memory",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    if proc is None:
+        return []
+    processes: list[GPUProcessInfo] = []
+    for line in proc.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) != 4:
+            continue
+        try:
+            used = int(float(parts[3]))
+            pid = int(float(parts[1]))
+        except ValueError:
+            continue
+        processes.append(
+            GPUProcessInfo(
+                gpu_uuid=parts[0],
+                gpu_index=uuid_to_index.get(parts[0]),
+                pid=pid,
+                process_name=parts[2],
+                used_memory_mb=used,
+            )
+        )
+    return processes
 
 
 def visible_gpu_indexes() -> list[int]:
@@ -215,4 +284,3 @@ def format_gpu_table(gpus: list[GPUInfo]) -> list[dict[str, str]]:
             }
         )
     return rows
-

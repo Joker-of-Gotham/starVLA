@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .gpu import GPUInfo, command_exists, detect_gpus, gpu_topology
+from .gpu import GPUInfo, command_exists, detect_compute_processes, detect_gpus, gpu_topology
 from .paths import CONFIG_ROOT, DEFAULT_ACCELERATE_CONFIG
 
 
@@ -148,6 +148,18 @@ def perf_preflight(selected_gpus: list[int], settings: PerfSettings) -> list[lis
     h200_count = sum(1 for gpu in selected if gpu.is_h200)
     low_free = [gpu.index for gpu in selected if gpu.memory_free_mb < 120_000]
     busy = [gpu.index for gpu in selected if gpu.util_percent > 10]
+    selected_set = set(selected_gpus)
+    compute_processes = [
+        proc
+        for proc in detect_compute_processes()
+        if proc.gpu_index in selected_set or (not selected_set and proc.gpu_index is not None)
+    ]
+    compute_detail = "; ".join(
+        f"gpu{proc.gpu_index}:pid{proc.pid}:{proc.used_memory_mb}MB:{Path(proc.process_name).name}"
+        for proc in compute_processes[:12]
+    )
+    if len(compute_processes) > 12:
+        compute_detail += f"; +{len(compute_processes) - 12} more"
     power_limited = [
         gpu.index
         for gpu in selected
@@ -165,6 +177,7 @@ def perf_preflight(selected_gpus: list[int], settings: PerfSettings) -> list[lis
         ["selected_gpus", len(selected_gpus), ",".join(map(str, selected_gpus)) or "-"],
         ["selected_h200", h200_count, "all selected GPUs should be H200 for the H200 profile"],
         ["free_memory_check", not low_free, f"GPUs below 120GB free before launch: {low_free or '-'}"],
+        ["compute_process_check", not compute_processes, compute_detail or "no existing CUDA compute processes on selected GPUs"],
         ["prelaunch_gpu_busy", not busy, f"GPUs above 10% util before launch: {busy or '-'}"],
         ["prelaunch_power_idle", True, f"low power before launch is normal if idle: {power_limited or '-'}"],
         ["topology_visible", topo_ok, "NVLink present" if _topology_has_nvlink(topo_text) else "NVLink not detected in nvidia-smi topo"],

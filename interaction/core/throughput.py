@@ -206,6 +206,14 @@ def _explicit_batch_cap(model_key: str, framework: str, mode: str, profile: str)
     fw = str(framework).lower()
     key = str(model_key).lower()
     is_fast = fw.endswith("fast") or "fast" in fw
+    is_qwen3_vl = "qwen3vl" in key or "qwen3-vl" in key
+    is_qwen3_vl_4b = is_qwen3_vl and "4b" in key
+    if is_qwen3_vl_4b:
+        if profile == "h200_saturated":
+            return {"vla": 16, "vlm": 2}
+        if profile == "balanced":
+            return {"vla": 8, "vlm": 2}
+        return {"vla": 4, "vlm": 1}
     if not is_fast:
         return None
     # FAST/action-token training goes through the VLM sequence path and is much
@@ -228,7 +236,7 @@ def _choose_batch(*, explicit: int | None, preset: int | None, target: int | Non
     if preset is None:
         return target
     key = str(model_key).lower()
-    if "9b" in key:
+    if "9b" in key or "qwen3vl" in key or "qwen3-vl" in key:
         return min(preset, target)
     return max(preset, target)
 

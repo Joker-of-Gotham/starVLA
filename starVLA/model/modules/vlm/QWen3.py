@@ -99,11 +99,18 @@ class _QWen3_VL_Interface(nn.Module):
         """
         Forward pass delegating to underlying Qwen2.5-VL backbone.
         """
-
+        backbone_only = bool(kwargs.pop("backbone_only", False))
+        labels = kwargs.get("labels", None)
+        output_hidden_states = bool(kwargs.get("output_hidden_states", False))
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            outputs = self.model(
-                **kwargs,
-            )
+            if labels is None and (backbone_only or output_hidden_states):
+                kwargs.pop("labels", None)
+                kwargs.setdefault("use_cache", False)
+                outputs = self.model.model(**kwargs)
+            else:
+                outputs = self.model(
+                    **kwargs,
+                )
 
         return outputs
 

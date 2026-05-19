@@ -184,11 +184,12 @@ class Qwenvl_OFT(baseframework):
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
                 output_attentions=False,
-                output_hidden_states=True,
+                output_hidden_states=False,
                 return_dict=True,
+                backbone_only=True,
             )
             # last_hidden_state: [B, seq_len, H]
-            last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
+            last_hidden = getattr(qwenvl_outputs, "last_hidden_state", qwenvl_outputs[0])  # [B, L, H]
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
@@ -257,11 +258,12 @@ class Qwenvl_OFT(baseframework):
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
                 output_attentions=False,
-                output_hidden_states=True,
+                output_hidden_states=False,
                 return_dict=True,
+                backbone_only=True,
             )
             # last_hidden_state: [B, seq_len, H]
-            last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
+            last_hidden = getattr(qwenvl_outputs, "last_hidden_state", qwenvl_outputs[0])  # [B, L, H]
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):

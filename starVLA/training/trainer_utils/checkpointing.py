@@ -40,6 +40,34 @@ def parse_step_from_path(path: str | os.PathLike[str] | None) -> int:
     return int(match.group(1)) if match else 0
 
 
+def is_valid_weight_checkpoint(path: str | os.PathLike[str] | None, *, min_bytes: int = 1024 * 1024) -> bool:
+    if not path:
+        return False
+    try:
+        target = Path(path)
+        return target.is_file() and target.stat().st_size >= min_bytes
+    except OSError:
+        return False
+
+
+def atomic_checkpoint_write(path: str | os.PathLike[str], writer) -> str:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.tmp.{os.getpid()}")
+    try:
+        tmp.unlink(missing_ok=True)
+        writer(str(tmp))
+        if not is_valid_weight_checkpoint(tmp, min_bytes=1024):
+            raise RuntimeError(f"checkpoint writer produced an invalid file: {tmp}")
+        os.replace(tmp, target)
+        return str(target)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def latest_state_checkpoint(state_root: str | os.PathLike[str]) -> tuple[str | None, int]:
     root = Path(state_root)
     if not root.exists():
@@ -220,7 +248,7 @@ def _json_dumps(data: Any) -> str:
 
 
 def _existing_file(path: Any) -> bool:
-    return bool(path) and Path(path).is_file()
+    return is_valid_weight_checkpoint(path)
 
 
 def _remove_file(path: Any) -> None:
