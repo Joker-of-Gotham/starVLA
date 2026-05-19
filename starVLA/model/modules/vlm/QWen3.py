@@ -64,6 +64,19 @@ class _QWen3_VL_Interface(nn.Module):
             dtype=torch.bfloat16,
             ignore_mismatched_sizes=True, # resize image no longer needed? @TODO check bug
         )
+        enable_grad_ckpt = qwenvl_config.get("enable_gradient_checkpointing", None)
+        if enable_grad_ckpt is None:
+            enable_grad_ckpt = config.framework.get("action_model", {}).get("gradient_checkpointing", False)
+        if enable_grad_ckpt:
+            try:
+                model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            except TypeError:
+                model.gradient_checkpointing_enable()
+            if hasattr(model.config, "use_cache"):
+                model.config.use_cache = False
+            if hasattr(model.config, "text_config") and hasattr(model.config.text_config, "use_cache"):
+                model.config.text_config.use_cache = False
+            print("[QWen3_VL] gradient_checkpointing ENABLED", flush=True)
         processor = AutoProcessor.from_pretrained(model_id)
         processor.tokenizer.padding_side = "left"
 
