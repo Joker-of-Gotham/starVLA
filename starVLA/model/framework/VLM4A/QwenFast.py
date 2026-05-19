@@ -257,15 +257,83 @@ class Qwenvl_Fast(baseframework):
                 **qwen_inputs,
                 max_length=2048,
             )
-        # --- Extract and decoder vlm_action to continue actions ---
-        # --- extrace token (index based on VLM) ---
+        # --- Extract and decode VLM action tokens to continuous actions. ---
         batch_vlm_action_token_ids = self._extract_action_token_ids(generated_ids)
-        # --- map index to fast tokenizer index space ---
         batch_fast_action_token_idx = self._decode_action_tokens(batch_vlm_action_token_ids)
-        # --- decode fast tokenizer index to action semantic ---
-        normalized_actions = self.action_model.fast_tokenizer.decode(batch_fast_action_token_idx)
+        normalized_actions = self._decode_fast_actions_or_fallback(batch_fast_action_token_idx)
 
         return {"normalized_actions": normalized_actions}
+
+    def _action_output_shape(self) -> Tuple[int, int]:
+        horizon = int(self.action_horizon)
+        action_dim = int(self.config.framework.action_model.action_dim)
+        return horizon, action_dim
+
+    def _empty_action_batch(self, batch_size: int) -> np.ndarray:
+        horizon, action_dim = self._action_output_shape()
+        return np.zeros((int(batch_size), horizon, action_dim), dtype=np.float32)
+
+    def _fit_decoded_action_shape(self, action: Any) -> np.ndarray:
+        horizon, action_dim = self._action_output_shape()
+        out = np.zeros((horizon, action_dim), dtype=np.float32)
+        arr = np.asarray(action, dtype=np.float32)
+        if arr.size == 0:
+            return out
+        if arr.ndim == 1:
+            flat = arr.reshape(-1)
+            take = min(flat.size, horizon * action_dim)
+            out.reshape(-1)[:take] = flat[:take]
+            return out
+
+        arr = arr.reshape(arr.shape[0], -1)
+        take_h = min(arr.shape[0], horizon)
+        take_d = min(arr.shape[1], action_dim)
+        out[:take_h, :take_d] = arr[:take_h, :take_d]
+        return out
+
+    def _warn_action_decode_fallback(self, missing_count: int, batch_size: int, reason: str | None = None) -> None:
+        warn_count = int(getattr(self, "_fast_decode_fallback_warn_count", 0))
+        if warn_count < 3:
+            suffix = f" reason={reason}" if reason else ""
+            logger.warning(
+                "QwenFast generated no decodable FAST action tokens for "
+                f"{missing_count}/{batch_size} eval samples; using zero-action fallback.{suffix}"
+            )
+        self._fast_decode_fallback_warn_count = warn_count + 1
+
+    def _decode_fast_actions_or_fallback(self, batch_fast_token_ids: List[List[int]]) -> np.ndarray:
+        batch_size = len(batch_fast_token_ids)
+        normalized_actions = self._empty_action_batch(batch_size)
+        valid = [(idx, seq) for idx, seq in enumerate(batch_fast_token_ids) if seq]
+        if not valid:
+            self._warn_action_decode_fallback(batch_size, batch_size)
+            return normalized_actions
+
+        valid_indices = [idx for idx, _ in valid]
+        valid_sequences = [seq for _, seq in valid]
+        try:
+            decoded = self.action_model.fast_tokenizer.decode(valid_sequences)
+        except Exception as exc:
+            self._warn_action_decode_fallback(batch_size, batch_size, str(exc))
+            return normalized_actions
+
+        if isinstance(decoded, np.ndarray):
+            if decoded.ndim == 2 and len(valid_indices) == 1:
+                decoded_samples = [decoded]
+            elif decoded.ndim >= 3:
+                decoded_samples = [decoded[i] for i in range(min(decoded.shape[0], len(valid_indices)))]
+            else:
+                decoded_samples = [decoded]
+        else:
+            decoded_samples = list(decoded)
+
+        for output_idx, decoded_action in zip(valid_indices, decoded_samples):
+            normalized_actions[output_idx] = self._fit_decoded_action_shape(decoded_action)
+
+        missing_count = batch_size - len(valid_indices)
+        if missing_count > 0:
+            self._warn_action_decode_fallback(missing_count, batch_size)
+        return normalized_actions
 
     def _extract_action_token_ids(
         self,
@@ -297,12 +365,13 @@ class Qwenvl_Fast(baseframework):
         fast_tokenizer.decode expects the original fast token id sequence (without offset).
         """
         act_min = self.qwen_vl_interface._ACTION_TOKEN_MIN
+        act_max = self.qwen_vl_interface._ACTION_TOKEN_MAX
         batch_fast_token_ids = []
         for seq in batch_vlm_tokens:
             if not seq:
-                batch_fast_token_ids.append(None)
+                batch_fast_token_ids.append([])
                 continue
-            fast_ids = [t - act_min for t in seq]
+            fast_ids = [t - act_min for t in seq if act_min <= t <= act_max]
 
             batch_fast_token_ids.append(fast_ids)
 

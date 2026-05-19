@@ -87,7 +87,31 @@ class Fast_Action_Tokenizer(nn.Module):
     def decoder_action(self, generated_ids):
         # api https://huggingface.co/physical-intelligence/fast
         # return: (batch_size, chunck, dim)
+        if generated_ids is None:
+            return self._empty_decoded_actions(batch_size=1)
+
+        if isinstance(generated_ids, (list, tuple)):
+            if not generated_ids:
+                return self._empty_decoded_actions(batch_size=1)
+            batch_size = len(generated_ids)
+            valid = [(idx, seq) for idx, seq in enumerate(generated_ids) if self._has_token_values(seq)]
+            if len(valid) != batch_size:
+                actions = self._empty_decoded_actions(batch_size=batch_size)
+                if not valid:
+                    return actions
+                decoded_valid = self.decoder_action([seq for _, seq in valid])
+                decoded_valid = np.asarray(decoded_valid, dtype=np.float32)
+                if decoded_valid.ndim == 2 and len(valid) == 1:
+                    decoded_valid = decoded_valid[None, ...]
+                for valid_offset, (output_idx, _) in enumerate(valid):
+                    if valid_offset < decoded_valid.shape[0]:
+                        actions[output_idx] = self._fit_action_shape(decoded_valid[valid_offset])
+                return actions
+
         generated_ids = np.asarray(generated_ids)
+        if generated_ids.size == 0:
+            return self._empty_decoded_actions(batch_size=1)
+
         action_token_min = getattr(self, "_ACTION_TOKEN_MIN", 0)
         if action_token_min:
             generated_ids = generated_ids - action_token_min
@@ -97,6 +121,41 @@ class Fast_Action_Tokenizer(nn.Module):
             generated_ids = generated_ids.tolist()
         pred_actions = self.fast_tokenizer.decode(generated_ids)
         return pred_actions
+
+    def _tokenizer_action_shape(self):
+        horizon = int(getattr(self.fast_tokenizer, "time_horizon", 1) or 1)
+        action_dim = int(getattr(self.fast_tokenizer, "action_dim", 1) or 1)
+        return horizon, action_dim
+
+    @staticmethod
+    def _has_token_values(seq):
+        if seq is None:
+            return False
+        try:
+            return len(seq) > 0
+        except TypeError:
+            return True
+
+    def _empty_decoded_actions(self, batch_size):
+        horizon, action_dim = self._tokenizer_action_shape()
+        return np.zeros((int(batch_size), horizon, action_dim), dtype=np.float32)
+
+    def _fit_action_shape(self, action):
+        horizon, action_dim = self._tokenizer_action_shape()
+        out = np.zeros((horizon, action_dim), dtype=np.float32)
+        arr = np.asarray(action, dtype=np.float32)
+        if arr.size == 0:
+            return out
+        if arr.ndim == 1:
+            flat = arr.reshape(-1)
+            take = min(flat.size, horizon * action_dim)
+            out.reshape(-1)[:take] = flat[:take]
+            return out
+        arr = arr.reshape(arr.shape[0], -1)
+        take_h = min(arr.shape[0], horizon)
+        take_d = min(arr.shape[1], action_dim)
+        out[:take_h, :take_d] = arr[:take_h, :take_d]
+        return out
 
     def fit_tokenizer_on_datasets(
         self,

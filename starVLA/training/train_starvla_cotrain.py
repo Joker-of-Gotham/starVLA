@@ -464,11 +464,22 @@ class VLAMTrainer(TrainerUtils):
 
     def eval_action_model(self, step_metrics: dict = None) -> float:
         """Evaluate action prediction with current model."""
+        if step_metrics is None:
+            step_metrics = {}
         if self.accelerator.is_main_process:
             examples, _ = self._get_next_batch()
             actions = [example["action"] for example in examples]
 
-            output_dict = self.accelerator.unwrap_model(self.model).predict_action(examples=examples)
+            try:
+                output_dict = self.accelerator.unwrap_model(self.model).predict_action(examples=examples)
+            except Exception as exc:
+                logger.warning(
+                    f"Action eval skipped at step {self.completed_steps}: {type(exc).__name__}: {exc}"
+                )
+                step_metrics["eval_action_error"] = 1.0
+                step_metrics["mse_score"] = float("nan")
+                dist.barrier()
+                return step_metrics
             normalized_actions = output_dict["normalized_actions"]
 
             actions = np.array(actions)

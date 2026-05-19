@@ -479,11 +479,24 @@ class VLATrainer(TrainerUtils):
 
     def eval_action_model(self, step_metrics: dict = None) -> float:
         """Run simple action-eval on current batch and attach score to metrics."""
+        if step_metrics is None:
+            step_metrics = {}
         examples = self._get_next_batch()
         actions = [example["action"] for example in examples]
-        output_dict = self.accelerator.unwrap_model(self.model).predict_action(
-            examples=examples, use_ddim=True, num_ddim_steps=20
-        )
+        try:
+            output_dict = self.accelerator.unwrap_model(self.model).predict_action(
+                examples=examples, use_ddim=True, num_ddim_steps=20
+            )
+        except Exception as exc:
+            if self.accelerator.is_main_process:
+                logger.warning(
+                    f"Action eval skipped at step {self.completed_steps}: {type(exc).__name__}: {exc}"
+                )
+                step_metrics["eval_action_error"] = 1.0
+                step_metrics["mse_score"] = float("nan")
+            del examples
+            dist.barrier()
+            return step_metrics
 
         if self.accelerator.is_main_process:
             normalized_actions = output_dict["normalized_actions"]
