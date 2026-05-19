@@ -164,7 +164,10 @@ def _invalidate_legacy_stats_cache(stats_path: Path, reason: str) -> None:
     if not stats_path.exists():
         return
     print(f"Removing stale dataset statistics cache at {stats_path}: {reason}")
-    stats_path.unlink()
+    try:
+        stats_path.unlink()
+    except OSError as exc:
+        print(f"Warning: could not remove stale statistics cache at {stats_path}: {exc}")
 
 
 def _load_stats_cache(
@@ -216,6 +219,38 @@ def _save_stats_cache(stats_path: Path, cache_config: dict, statistics: dict) ->
     with open(tmp_path, "w") as f:
         json.dump(payload, f, indent=4)
     os.replace(tmp_path, stats_path)
+
+
+def _side_cache_path(dataset_path: Path, cache_root: str, filename: str) -> Path:
+    try:
+        resolved_dataset_path = dataset_path.resolve()
+    except OSError:
+        resolved_dataset_path = dataset_path.absolute()
+
+    digest = hashlib.sha1(str(resolved_dataset_path).encode("utf-8")).hexdigest()[:12]
+    return Path(cache_root) / f"{dataset_path.name}-{digest}" / filename
+
+
+def _resolve_stats_cache_path(
+    dataset_path: Path,
+    default_stats_path: Path,
+    stats_cache_config: dict,
+) -> Path:
+    """Use in-dataset stats when present, otherwise allow a writable side cache."""
+    cache_root = os.getenv("STARVLA_STATS_CACHE_DIR")
+    if default_stats_path.exists():
+        default_stats = _load_stats_cache(
+            default_stats_path,
+            stats_cache_config,
+            invalidate_legacy=False,
+        )
+        if default_stats is not None or not cache_root:
+            return default_stats_path
+
+    if not cache_root:
+        return default_stats_path
+
+    return _side_cache_path(dataset_path, cache_root, LE_ROBOT_STATS_FILENAME)
 
 
 def _compute_statistics_for_mode(
@@ -804,7 +839,6 @@ class LeRobotSingleDataset(Dataset):
         
         action_mode = _normalize_action_mode(self.data_cfg.get("action_mode", "abs") if self.data_cfg else "abs")
 
-        stats_path = self.dataset_path / LE_ROBOT_STATS_FILENAME
         action_cfg = self.modality_configs.get("action")
         state_cfg = self.modality_configs.get("state")
         action_keys_full = list(action_cfg.modality_keys) if action_cfg else []
@@ -821,6 +855,11 @@ class LeRobotSingleDataset(Dataset):
         )
         stats_cache_config = _build_stats_cache_config(
             action_mode=action_mode,
+        )
+        stats_path = _resolve_stats_cache_path(
+            self.dataset_path,
+            self.dataset_path / LE_ROBOT_STATS_FILENAME,
+            stats_cache_config,
         )
         parquet_files = list(self.dataset_path.glob(LE_ROBOT_DATA_FILENAME))
         parquet_files_filtered = [
@@ -974,12 +1013,13 @@ class LeRobotSingleDataset(Dataset):
     
         config_key = self._get_steps_config_key()
         steps_filename = "steps_data_index.pkl"
-        steps_path = self.dataset_path / "meta" / steps_filename
+        default_steps_path = self.dataset_path / "meta" / steps_filename
+        steps_path = default_steps_path
     
         # ---------- try to read from cache  ----------
-        if steps_path.exists():
+        if default_steps_path.exists():
             try:
-                with open(steps_path, "rb") as f:
+                with open(default_steps_path, "rb") as f:
                     cached_data = pickle.load(f)
                 return cached_data["steps"]
             except Exception as e:
@@ -988,6 +1028,20 @@ class LeRobotSingleDataset(Dataset):
                     f"[RANK {os.environ.get('RANK', 'NA')}] "
                     f"Failed to load cached steps ({e}), will rebuild."
                 )
+
+        cache_root = os.getenv("STARVLA_DATASET_CACHE_DIR")
+        if cache_root:
+            steps_path = _side_cache_path(self.dataset_path, cache_root, steps_filename)
+            if steps_path.exists():
+                try:
+                    with open(steps_path, "rb") as f:
+                        cached_data = pickle.load(f)
+                    return cached_data["steps"]
+                except Exception as e:
+                    print(
+                        f"[RANK {os.environ.get('RANK', 'NA')}] "
+                        f"Failed to load side cached steps ({e}), will rebuild."
+                    )
     
         # ---------- only build by rank0  ----------
         if is_main():

@@ -10,6 +10,27 @@ from starVLA.dataloader.vlm_datasets import make_vlm_dataloader
 
 logger = get_logger(__name__)
 
+
+def _cfg_get(cfg, key, default=None):
+    if cfg is None:
+        return default
+    getter = getattr(cfg, "get", None)
+    if callable(getter):
+        return getter(key, default)
+    return getattr(cfg, key, default)
+
+
+def _dataloader_kwargs(data_cfg, default_workers=4):
+    num_workers = int(_cfg_get(data_cfg, "num_workers", default_workers) or 0)
+    kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": bool(_cfg_get(data_cfg, "pin_memory", num_workers > 0)),
+        "persistent_workers": bool(_cfg_get(data_cfg, "persistent_workers", num_workers > 0)) if num_workers > 0 else False,
+    }
+    if num_workers > 0:
+        kwargs["prefetch_factor"] = int(_cfg_get(data_cfg, "prefetch_factor", 2) or 2)
+    return kwargs
+
 def save_dataset_statistics(dataset_statistics, run_dir):
     """Saves a `dataset_statistics.json` file."""
     out_path = run_dir / "dataset_statistics.json"
@@ -45,7 +66,7 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
             vla_dataset,
             batch_size=cfg.datasets.vla_data.per_device_batch_size,
             collate_fn=collate_fn,
-            num_workers=4,
+            **_dataloader_kwargs(cfg.datasets.vla_data, default_workers=4),
             # shuffle=True
         )        
         if dist.get_rank() == 0: 

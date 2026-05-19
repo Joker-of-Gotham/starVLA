@@ -589,7 +589,10 @@ def make_vlm_dataloader(cfg):
         train_dataset,
         batch_size=cfg.datasets.vlm_data.per_device_batch_size,
         collate_fn=data_collator,
-        num_workers=4,
+        num_workers=int(cfg.datasets.vlm_data.get("num_workers", 4)),
+        pin_memory=bool(cfg.datasets.vlm_data.get("pin_memory", True)),
+        persistent_workers=bool(cfg.datasets.vlm_data.get("persistent_workers", True)) if int(cfg.datasets.vlm_data.get("num_workers", 4)) > 0 else False,
+        prefetch_factor=int(cfg.datasets.vlm_data.get("prefetch_factor", 2)) if int(cfg.datasets.vlm_data.get("num_workers", 4)) > 0 else None,
     )
 
     return {

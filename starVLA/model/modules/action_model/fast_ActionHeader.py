@@ -20,6 +20,9 @@ import numpy as np
 import torch.nn as nn
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
+DEFAULT_FAST_TOKENIZER_PATH = "playground/Pretrained_models/fast"
+
+
 def _load_fast_processor(pretrained_path: str = "physical-intelligence/fast"):
     """Load the FAST UniversalActionProcessor with compatibility for transformers >= 5.x.
 
@@ -36,7 +39,7 @@ def _load_fast_processor(pretrained_path: str = "physical-intelligence/fast"):
     from huggingface_hub import snapshot_download
     import importlib.util
 
-    local_dir = snapshot_download(pretrained_path)
+    local_dir = pretrained_path if os.path.isdir(pretrained_path) else snapshot_download(pretrained_path)
 
     spec = importlib.util.spec_from_file_location(
         "processing_action_tokenizer",
@@ -68,12 +71,11 @@ def _load_fast_processor(pretrained_path: str = "physical-intelligence/fast"):
 class Fast_Action_Tokenizer(nn.Module):
     """One MLP ResNet block with a residual connection."""
 
-    def __init__(self, fast_tokenizer_name="playground/Pretrained_models/fast"):
+    def __init__(self, fast_tokenizer_name=None):
         super().__init__()
 
-        self.fast_tokenizer = AutoProcessor.from_pretrained(
-            fast_tokenizer_name, trust_remote_code=True
-        )  # load https://huggingface.co/physical-intelligence/fast
+        fast_tokenizer_name = fast_tokenizer_name or os.getenv("STARVLA_FAST_TOKENIZER", DEFAULT_FAST_TOKENIZER_PATH)
+        self.fast_tokenizer = _load_fast_processor(fast_tokenizer_name)
 
     def encoder_action2fastoken(self, raw_actions):
         # x: (batch_size, chunck, dim)
@@ -85,7 +87,15 @@ class Fast_Action_Tokenizer(nn.Module):
     def decoder_action(self, generated_ids):
         # api https://huggingface.co/physical-intelligence/fast
         # return: (batch_size, chunck, dim)
-        pred_actions = self.fast_tokenizer.decode([generated_ids - self._ACTION_TOKEN_MIN])
+        generated_ids = np.asarray(generated_ids)
+        action_token_min = getattr(self, "_ACTION_TOKEN_MIN", 0)
+        if action_token_min:
+            generated_ids = generated_ids - action_token_min
+        if generated_ids.ndim == 1:
+            generated_ids = [generated_ids.tolist()]
+        else:
+            generated_ids = generated_ids.tolist()
+        pred_actions = self.fast_tokenizer.decode(generated_ids)
         return pred_actions
 
     def fit_tokenizer_on_datasets(
@@ -116,7 +126,10 @@ def get_action_model(config=None):
     Returns:
         ActionModel: Initialized diffusion action head.
     """
-    action_model = Fast_Action_Tokenizer()
+    fast_tokenizer_name = None
+    if config is not None:
+        fast_tokenizer_name = config.framework.action_model.get("fast_tokenizer_name", None)
+    action_model = Fast_Action_Tokenizer(fast_tokenizer_name=fast_tokenizer_name)
 
     return action_model
 

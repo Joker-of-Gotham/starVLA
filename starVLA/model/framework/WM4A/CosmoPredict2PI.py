@@ -30,6 +30,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from deployment.model_server.tools.image_tools import to_pil_preserve
 from starVLA.training.trainer_utils import initialize_overwatch
@@ -82,6 +83,7 @@ class CosmoPredict2PIDefaultConfig:
             "add_pos_embed": True,
             "max_seq_len": 1024,
             "num_target_vision_tokens": 32,
+            "gradient_checkpointing": True,
             "noise_beta_alpha": 1.5,
             "noise_beta_beta": 1.0,
             "noise_s": 0.999,
@@ -117,6 +119,12 @@ class CosmoPredict2_PI(baseframework):
 
         self.config.framework.qwenvl.vl_hidden_dim = wm_hidden
         self.config.framework.qwenvl.num_vl_layers = num_blocks
+        diffusion_model_cfg = self.config.framework.action_model.diffusion_model_cfg
+        diffusion_model_cfg["num_layers"] = num_blocks
+        diffusion_model_cfg["input_embedding_dim"] = wm_hidden
+        diffusion_model_cfg["cross_attention_dim"] = wm_hidden
+        attention_head_dim = int(diffusion_model_cfg.get("attention_head_dim", 64))
+        diffusion_model_cfg["num_attention_heads"] = max(1, wm_hidden // attention_head_dim)
 
         self.action_model: LayerwiseFlowmatchingActionHead = get_action_model(config=self.config)
 
@@ -129,6 +137,7 @@ class CosmoPredict2_PI(baseframework):
         # Register hooks for ALL transformer blocks (not just extract_layers)
         self._all_hidden_states = []
         self._all_hooks = []
+        self._detach_backbone_features = False
         self._register_all_hooks()
 
     def _register_all_hooks(self):
@@ -147,9 +156,49 @@ class CosmoPredict2_PI(baseframework):
 
     def _capture_all_hook(self, module, input, output):
         if isinstance(output, tuple):
-            self._all_hidden_states.append(output[0])
+            hidden_states = output[0]
         else:
-            self._all_hidden_states.append(output)
+            hidden_states = output
+        if self._detach_backbone_features:
+            hidden_states = hidden_states.detach()
+        self._all_hidden_states.append(hidden_states)
+
+    def _backbone_requires_grad(self) -> bool:
+        return any(param.requires_grad for param in self.backbone.parameters())
+
+    def _target_condition_tokens(self) -> int | None:
+        action_cfg = self.config.framework.action_model
+        value = action_cfg.get("num_target_vision_tokens", None)
+        if value is None:
+            return None
+        value = int(value)
+        return value if value > 0 else None
+
+    def _pool_condition_tokens(self, hidden_states: torch.Tensor, target_tokens: int | None) -> torch.Tensor:
+        if target_tokens is None or hidden_states.shape[1] <= target_tokens:
+            return hidden_states
+        pooled = F.adaptive_avg_pool1d(hidden_states.transpose(1, 2), target_tokens).transpose(1, 2)
+        return pooled.contiguous()
+
+    def _collect_backbone_features(self, wm_inputs: dict) -> list[torch.Tensor]:
+        backbone_trainable = self._backbone_requires_grad()
+        self._detach_backbone_features = not backbone_trainable
+        self._all_hidden_states.clear()
+        if not backbone_trainable:
+            self.backbone.eval()
+        grad_context = torch.enable_grad() if backbone_trainable else torch.no_grad()
+        with grad_context:
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                _ = self.backbone(
+                    **wm_inputs,
+                    output_hidden_states=False,
+                    return_dict=True,
+                )
+        vl_embs_list = list(self._all_hidden_states)
+        self._all_hidden_states.clear()
+        self._detach_backbone_features = False
+        target_tokens = self._target_condition_tokens()
+        return [self._pool_condition_tokens(hidden, target_tokens) for hidden in vl_embs_list]
 
     def forward(self, examples: List[dict] = None, **kwargs) -> Tuple:
         batch_images = [example["image"] for example in examples]
@@ -160,18 +209,10 @@ class CosmoPredict2_PI(baseframework):
 
         wm_inputs = self.backbone.build_inputs(images=batch_images, instructions=instructions)
 
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            self._all_hidden_states.clear()
-            wm_outputs = self.backbone(
-                **wm_inputs,
-                output_hidden_states=True,
-                return_dict=True,
-            )
-            # Collect all layer hidden states
-            vl_embs_list = list(self._all_hidden_states)
-            base_hidden = vl_embs_list[-1]
+        vl_embs_list = self._collect_backbone_features(wm_inputs)
+        base_hidden = vl_embs_list[-1]
 
-        with torch.autocast("cuda", dtype=torch.float32):
+        with torch.autocast("cuda", dtype=torch.bfloat16):
             actions = torch.tensor(np.array(actions), device=base_hidden.device, dtype=base_hidden.dtype)
             actions_target = actions[:, -self.action_horizon :, :]
 
@@ -205,14 +246,7 @@ class CosmoPredict2_PI(baseframework):
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
 
         wm_inputs = self.backbone.build_inputs(images=batch_images, instructions=instructions)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            self._all_hidden_states.clear()
-            wm_outputs = self.backbone(
-                **wm_inputs,
-                output_hidden_states=True,
-                return_dict=True,
-            )
-            vl_embs_list = list(self._all_hidden_states)
+        vl_embs_list = self._collect_backbone_features(wm_inputs)
 
         state = (
             torch.from_numpy(np.array(state)).to(vl_embs_list[-1].device, dtype=vl_embs_list[-1].dtype)
@@ -220,10 +254,10 @@ class CosmoPredict2_PI(baseframework):
             else None
         )
 
-        with torch.autocast("cuda", dtype=torch.float32):
+        with torch.autocast("cuda", dtype=torch.bfloat16):
             pred_actions = self.action_model.predict_action(vl_embs_list, state)
 
-        normalized_actions = pred_actions.detach().cpu().numpy()
+        normalized_actions = pred_actions.detach().float().cpu().numpy()
         return {"normalized_actions": normalized_actions}
 
 

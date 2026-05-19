@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.distributions import Beta
+from torch.utils.checkpoint import checkpoint
 from transformers import PretrainedConfig
 from transformers.feature_extraction_utils import BatchFeature
 
@@ -277,6 +278,7 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         self.beta_dist = Beta(action_config.noise_beta_alpha, action_config.noise_beta_beta)
         self.num_timestep_buckets = action_config.num_timestep_buckets
         self.config = action_config
+        self.gradient_checkpointing = bool(action_config.get("gradient_checkpointing", True))
 
     def sample_time(self, batch_size, device, dtype):
         sample = self.beta_dist.sample([batch_size]).to(device, dtype=dtype)
@@ -328,18 +330,35 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         # Layerwise cross-attention with vl_embs
         model_output = sa_embs
         for layer_idx, layer in enumerate(self.model.transformer_blocks):
-            model_output = layer(
-                hidden_states=model_output,
-                encoder_hidden_states=vl_embs_list[layer_idx],  # Use layer-specific vl_embs
-                temb=temb,
-            )
+            encoder_hidden_states = vl_embs_list[layer_idx]  # Use layer-specific vl_embs
+            if self.gradient_checkpointing and self.training and torch.is_grad_enabled():
+                def _layer_forward(hidden_states, encoder_states, timestep_embedding, layer=layer):
+                    return layer(
+                        hidden_states=hidden_states,
+                        encoder_hidden_states=encoder_states,
+                        temb=timestep_embedding,
+                    )
+
+                model_output = checkpoint(
+                    _layer_forward,
+                    model_output,
+                    encoder_hidden_states,
+                    temb,
+                    use_reentrant=False,
+                )
+            else:
+                model_output = layer(
+                    hidden_states=model_output,
+                    encoder_hidden_states=encoder_hidden_states,
+                    temb=temb,
+                )
 
         # TODO miss self att and _process_output, but work well
         pred = self.action_decoder(model_output)
         pred_actions = pred[:, -actions.shape[1] :]
 
         # Slice out only the action portion of pred and target.
-        loss = ((pred_actions - velocity) ** 2).mean()
+        loss = ((pred_actions.float() - velocity.float()) ** 2).mean()
         return loss
 
     @torch.no_grad()

@@ -127,9 +127,9 @@ ROBOT_TYPE_CONFIG_MAP = {
 }
 
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
-    # Per Proposal A, embodiment_tag now lives as a classvar on each DataConfig.
-    # The registry derives ROBOT_TYPE_TO_EMBODIMENT_TAG automatically. Kept as
-    # an empty dict for backward compat (it is honored as legacy override).
+    "robotwin": EmbodimentTag.NEW_EMBODIMENT,
+    "robotwin50": EmbodimentTag.NEW_EMBODIMENT,
+    "arx_x5": EmbodimentTag.NEW_EMBODIMENT,
 }
 
 # ---------------------------------------------------------------------------

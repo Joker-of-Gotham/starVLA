@@ -657,7 +657,7 @@ class LangForce(baseframework):
         with torch.autocast("cuda", dtype=torch.float32):
             pred_actions = self.action_model.predict_action(action_hidden, state_tensor)
 
-        return {"normalized_actions": pred_actions.detach().cpu().numpy()}
+        return {"normalized_actions": pred_actions.detach().float().cpu().numpy()}
 
 
 if __name__ == "__main__":

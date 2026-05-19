@@ -379,7 +379,7 @@ class Qwen_PI_v3(baseframework):
                 vl_embs_list, state
             )  # (B, action_horizon, action_dim)
 
-        normalized_actions = pred_actions.detach().cpu().numpy()
+        normalized_actions = pred_actions.detach().float().cpu().numpy()
         return {"normalized_actions": normalized_actions}
 
     def state2str_transform(self, state: np.ndarray) -> str:

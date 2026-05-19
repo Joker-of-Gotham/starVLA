@@ -71,6 +71,8 @@ class QwenFastDefaultConfig:
         default_factory=lambda: {
             # Action head architecture type
             "action_model_type": "FAST",
+            # Local FAST processor/tokenizer. Override with STARVLA_FAST_TOKENIZER or YAML if needed.
+            "fast_tokenizer_name": "playground/Pretrained_models/fast",
             # Dimensionality of each action vector (e.g., 7 for 6-DoF + gripper)
             "action_dim": 7,
             # How many future steps to predict

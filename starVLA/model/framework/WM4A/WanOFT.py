@@ -180,7 +180,7 @@ class Wan_OFT(baseframework):
             action_queries = self._pool_to_action_queries(last_hidden)
             pred_actions = self.action_model.predict_action(action_queries)
 
-        normalized_actions = pred_actions.detach().cpu().numpy()
+        normalized_actions = pred_actions.detach().float().cpu().numpy()
         return {"normalized_actions": normalized_actions}
 
 
