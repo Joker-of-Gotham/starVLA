@@ -1,6 +1,7 @@
 debug/
 ckpts/
 third_party/
+.tools/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -262,3 +263,15 @@ examples/SimplerEnv/eval_files/auto_eval_scripts/auto_collect_results/schedule_w
 examples/SimplerEnv/eval_files/auto_eval_scripts/auto_collect_results/summarize_widowx_all.sh
 examples/SimplerEnv/eval_files/auto_eval_scripts/auto_collect_results/schedule_widowx_eval.sh
 starVLA/model/framework/VLM4A/QwenGR00T_v2.py
+interaction/runs/
+!interaction/README.md
+
+# StarVLA offline environment artifacts: keep scripts, manifests, overlays,
+# sources, and small wheels in git; do not commit generated logs/caches or
+# GitHub-size-limit binaries without Git LFS.
+envSet/**/logs/
+envSet/**/__pycache__/
+envSet/**/*.pyc
+envSet/starvla_env/archives/*.tar
+envSet/starvla_env/wheelhouse/flash_attn/*.whl
+envSet/starvla_env/wheelhouse/calvin_eval/pybullet-*.whl
