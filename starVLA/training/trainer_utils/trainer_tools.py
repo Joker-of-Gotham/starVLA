@@ -6,6 +6,7 @@ endpoints (e.g., JSONL local logs, Weights & Biases).
 """
 
 from typing import Tuple
+import os
 import re
 import json
 import numpy as np
@@ -199,6 +200,45 @@ class TrainerUtils:
         except Exception as exc:
             if logger_obj is not None:
                 logger_obj.warning(f"Torch runtime performance configuration skipped: {exc}")
+
+    @staticmethod
+    def apply_interaction_safety_caps(cfg, logger_obj=None):
+        """Clamp unsafe interactive Qwen3-VL batch overrides before dataloaders are built."""
+        runtime_cfg = getattr(getattr(cfg, "trainer", None), "policy_runtime", None)
+        runtime_enabled = False
+        try:
+            runtime_enabled = bool(runtime_cfg and runtime_cfg.get("enabled", False))
+        except Exception:
+            runtime_enabled = bool(runtime_cfg)
+        if not os.environ.get("STARVLA_JOB_DIR") and not runtime_enabled:
+            return cfg
+
+        base_vlm = str(getattr(getattr(cfg.framework, "qwenvl", {}), "base_vlm", "")).lower()
+        framework = str(getattr(cfg.framework, "name", "")).lower()
+        is_qwen3_vl_4b = ("qwen3-vl" in base_vlm or "qwen3vl" in base_vlm) and "4b" in base_vlm
+        if not is_qwen3_vl_4b:
+            return cfg
+
+        profile = os.environ.get("STARVLA_PERF_PROFILE", "").lower()
+        if profile == "h200_8gpu":
+            cap = 16
+        elif "fast" in framework:
+            cap = 8
+        else:
+            cap = 8
+
+        try:
+            current = int(cfg.datasets.vla_data.per_device_batch_size)
+        except Exception:
+            return cfg
+        if current > cap:
+            cfg.datasets.vla_data.per_device_batch_size = cap
+            if logger_obj is not None:
+                logger_obj.warning(
+                    f"Interaction safety cap: datasets.vla_data.per_device_batch_size {current} -> {cap} "
+                    f"for {cfg.framework.name}/{cfg.framework.qwenvl.base_vlm}."
+                )
+        return cfg
 
     @staticmethod
     def dataloader_len(dataloader) -> int | None:

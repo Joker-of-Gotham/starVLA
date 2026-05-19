@@ -582,6 +582,7 @@ def main(cfg) -> None:
     logger.info("VLA Training :: Warming Up")
 
     TrainerUtils.configure_torch_runtime(logger)
+    cfg = TrainerUtils.apply_interaction_safety_caps(cfg, logger)
     cfg = wrap_config(cfg)
     logger.info("✅ Configuration wrapped for access tracking")
 
