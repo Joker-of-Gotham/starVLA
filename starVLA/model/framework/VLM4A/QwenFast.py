@@ -22,6 +22,7 @@ from typing import Any, List, Optional, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from deployment.model_server.tools.image_tools import to_pil_preserve
@@ -163,19 +164,62 @@ class Qwenvl_Fast(baseframework):
             images=batch_images, instructions=instructions, solutions=vlm_action_tokens
         )
 
+        labels = qwen_inputs.pop("labels", None)
+        input_ids = qwen_inputs.get("input_ids", None)
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            qwenvl_outputs = self.qwen_vl_interface(
+            qwenvl_outputs = self.qwen_vl_interface.model.model(
                 **qwen_inputs,
                 output_attentions=False,
                 output_hidden_states=False,
-                return_dict=True,
+                use_cache=False,
             )
+            last_hidden = qwenvl_outputs[0]
 
-        vlm_action_loss = qwenvl_outputs.loss
-        if vlm_action_loss is None or torch.isnan(vlm_action_loss):
-            vlm_action_loss = torch.tensor(0.0, device=self.qwen_vl_interface.model.device)
+        # Avoid HuggingFace's full-vocabulary CausalLM loss here. For Qwen3-VL-Action
+        # it upcasts [B, L, vocab] logits to fp32 and can add >7GB per rank at
+        # H200-sized batches. FAST supervision only needs the action-token slice.
+        vlm_action_loss = self._fast_action_token_loss(
+            hidden_states=last_hidden,
+            input_ids=input_ids,
+            labels=labels,
+        )
 
         return {"action_loss": vlm_action_loss}
+
+    def _fast_action_token_loss(
+        self,
+        *,
+        hidden_states: torch.Tensor,
+        input_ids: torch.Tensor | None,
+        labels: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if labels is None or input_ids is None:
+            return hidden_states.sum() * 0.0
+
+        act_min = self.qwen_vl_interface._ACTION_TOKEN_MIN
+        act_max = self.qwen_vl_interface._ACTION_TOKEN_MAX
+        target_mask = (labels >= act_min) & (labels <= act_max)
+        if not bool(target_mask.any()):
+            return hidden_states.sum() * 0.0
+
+        target_positions = target_mask.nonzero(as_tuple=False)
+        batch_idx = target_positions[:, 0]
+        token_pos = target_positions[:, 1]
+        pred_pos = token_pos - 1
+        valid = pred_pos >= 0
+        if not bool(valid.any()):
+            return hidden_states.sum() * 0.0
+
+        batch_idx = batch_idx[valid]
+        pred_pos = pred_pos[valid]
+        targets = labels[target_mask][valid].long() - act_min
+
+        pred_hidden = hidden_states[batch_idx, pred_pos, :]
+        lm_head = self.qwen_vl_interface.model.lm_head
+        action_weight = lm_head.weight[act_min : act_max + 1]
+        action_bias = lm_head.bias[act_min : act_max + 1] if getattr(lm_head, "bias", None) is not None else None
+        action_logits = F.linear(pred_hidden, action_weight, action_bias)
+        return F.cross_entropy(action_logits.float(), targets)
 
     @torch.inference_mode()
     def predict_action(

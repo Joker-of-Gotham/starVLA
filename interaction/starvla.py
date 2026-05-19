@@ -1360,7 +1360,8 @@ def command_menu(args: argparse.Namespace) -> int:
             _rich_panel(
                 "Throughput Inputs",
                 "[cyan]auto[/cyan] lets the selected throughput profile choose values. "
-                "For H200, start with auto or a moderate explicit batch such as 16/24; "
+                "For H200, start with auto or a moderate explicit batch. "
+                "FAST/QwenFast action-token runs should use auto or 8/16; "
                 "if OOM occurs, relaunch with a smaller batch and [bold]Run mode = continue[/bold].",
                 style="magenta",
             )

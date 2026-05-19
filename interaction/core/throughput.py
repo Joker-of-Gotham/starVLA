@@ -72,6 +72,22 @@ def resolve_throughput_settings(
         target=model_target.get("vlm"),
         model_key=model_key,
     )
+    safe_cap = _explicit_batch_cap(model_key, framework, mode, resolved)
+    if safe_cap:
+        cap_vla = safe_cap.get("vla")
+        cap_vlm = safe_cap.get("vlm")
+        if explicit_vla_batch is not None and cap_vla is not None and vla_batch is not None and vla_batch > cap_vla:
+            warnings.append(
+                f"VLA per-device batch {vla_batch} is unsafe for {framework}/{model_key} under {resolved}; "
+                f"clamped to {cap_vla}. Use throughput profile 'none' only for deliberate profiling."
+            )
+            vla_batch = cap_vla
+        if explicit_vlm_batch is not None and cap_vlm is not None and vlm_batch is not None and vlm_batch > cap_vlm:
+            warnings.append(
+                f"VLM per-device batch {vlm_batch} is unsafe for {framework}/{model_key} under {resolved}; "
+                f"clamped to {cap_vlm}. Use throughput profile 'none' only for deliberate profiling."
+            )
+            vlm_batch = cap_vlm
 
     if resolved == "h200_saturated":
         workers = 8
@@ -149,12 +165,17 @@ def _batch_target_for_model(model_key: str, framework: str, mode: str, profile: 
     key = str(model_key).lower()
     fw = str(framework).lower()
     is_cotrain = mode == "cotrain"
+    is_fast = fw.endswith("fast") or "fast" in fw
 
     if profile == "conservative":
+        if is_fast:
+            return {"vla": 2, "vlm": 1}
         if "cosmos" in key or "cosmo" in fw:
             return {"vla": 2, "vlm": 1}
         return {"vla": 2 if "9b" in key else 4, "vlm": 1 if "9b" in key else 2}
     if profile == "balanced":
+        if is_fast:
+            return {"vla": 4, "vlm": 1}
         if "cosmos" in key or "cosmo" in fw:
             return {"vla": 4, "vlm": 1}
         if "9b" in key:
@@ -164,6 +185,8 @@ def _batch_target_for_model(model_key: str, framework: str, mode: str, profile: 
         return {"vla": 8, "vlm": 2}
 
     # h200_saturated: use H200 memory aggressively while keeping large VLMs guarded.
+    if is_fast:
+        return {"vla": 8, "vlm": 2}
     if "cosmos" in key or "cosmo" in fw:
         return {"vla": 8, "vlm": 1}
     if "9b" in key:
@@ -174,9 +197,27 @@ def _batch_target_for_model(model_key: str, framework: str, mode: str, profile: 
         return {"vla": 16 if is_cotrain else 24, "vlm": 4}
     if "0.8b" in key or "0_8b" in key:
         return {"vla": 24 if is_cotrain else 32, "vlm": 4}
-    if framework.lower().endswith("fast"):
-        return {"vla": 8, "vlm": 2}
     return {"vla": 8, "vlm": 2}
+
+
+def _explicit_batch_cap(model_key: str, framework: str, mode: str, profile: str) -> dict[str, int] | None:
+    if profile == "none":
+        return None
+    fw = str(framework).lower()
+    key = str(model_key).lower()
+    is_fast = fw.endswith("fast") or "fast" in fw
+    if not is_fast:
+        return None
+    # FAST/action-token training goes through the VLM sequence path and is much
+    # more memory sensitive than continuous OFT/PI heads. Keep manual input from
+    # bypassing the profile guard; the unsafe override remains profile=none.
+    if profile == "h200_saturated" and ("4b" in key or "qwen3-vl" in key or "qwen3vl" in key):
+        return {"vla": 16, "vlm": 2}
+    if profile == "h200_saturated":
+        return {"vla": 24, "vlm": 2}
+    if profile == "balanced":
+        return {"vla": 8, "vlm": 1}
+    return {"vla": 4, "vlm": 1}
 
 
 def _choose_batch(*, explicit: int | None, preset: int | None, target: int | None, model_key: str) -> int | None:
