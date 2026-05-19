@@ -28,11 +28,30 @@ from pathlib import Path
 
 import hydra
 import numpy as np
-import tyro
+try:
+    import tyro
+except ModuleNotFoundError:
+    tyro = None
 
 from omegaconf import OmegaConf
-from termcolor import colored
-from tqdm import tqdm
+try:
+    from termcolor import colored
+except ModuleNotFoundError:
+    def colored(text, *_args, **_kwargs):
+        return text
+
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:
+    class tqdm:
+        def __init__(self, iterable, *args, **kwargs):
+            self.iterable = iterable
+
+        def __iter__(self):
+            return iter(self.iterable)
+
+        def set_description(self, *_args, **_kwargs):
+            return None
 
 from deployment.model_server.tools import image_tools
 from examples.LIBERO.eval_files.model2libero_interface import ModelClient
@@ -51,7 +70,7 @@ else:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-EP_LEN = 360  # Max steps per task
+EP_LEN = int(os.environ.get("CALVIN_EP_LEN", "360"))  # Max steps per task
 
 
 def collect_plan(model, plans, subtask):
@@ -62,6 +81,8 @@ def collect_plan(model, plans, subtask):
 
 
 def count_success(results):
+    if not results:
+        return [0.0] * 5
     count = Counter(results)
     step_success = []
     for i in range(1, 6):
@@ -73,7 +94,7 @@ def count_success(results):
 def print_and_save(results, sequences, log_dir, epoch=None):
     current_data = {}
     print(f"Results for Epoch {epoch}:")
-    avg_seq_len = float(np.mean(results))
+    avg_seq_len = float(np.mean(results)) if results else 0.0
     chain_sr = {i + 1: float(sr) for i, sr in enumerate(count_success(results))}
     print(f"Average successful sequence length: {avg_seq_len}")
     print("Success rates for i instructions in a row:")
@@ -97,7 +118,7 @@ def print_and_save(results, sequences, log_dir, epoch=None):
         print(f"{task}: {cnt_success[task]} / {total[task]} |  SR: {cnt_success[task] / total[task] * 100:.1f}%")
 
     data = {"avg_seq_len": avg_seq_len, "chain_sr": chain_sr, "task_info": task_info}
-    current_data[epoch] = data
+    current_data[str(epoch)] = data
 
     print()
     previous_data = {}
@@ -109,10 +130,11 @@ def print_and_save(results, sequences, log_dir, epoch=None):
     json_data = {**previous_data, **current_data}
     with open(log_dir / "results.json", "w") as file:
         json.dump(json_data, file)
-    print(
-        f"Best model: epoch {max(json_data, key=lambda x: json_data[x]['avg_seq_len'])} "
-        f"with average sequences length of {max(map(lambda x: x['avg_seq_len'], json_data.values()))}"
-    )
+    if json_data:
+        print(
+            f"Best model: epoch {max(json_data, key=lambda x: json_data[x]['avg_seq_len'])} "
+            f"with average sequences length of {max(map(lambda x: x['avg_seq_len'], json_data.values()))}"
+        )
 
 
 def get_log_dir(log_dir):
@@ -250,6 +272,8 @@ class Args:
     port: int = 8000
     resize_size: int = 224
     replan_steps: int = 5
+    use_ddim: bool = True
+    num_ddim_steps: int = 10
     pretrained_path: str = ""
     unnorm_key: str = ""
 
@@ -262,6 +286,7 @@ class Args:
     num_sequences: int = 1000  # Number of evaluation sequences
     max_steps_per_task: int = EP_LEN  # Official CALVIN uses 360; lower this only for quick smoke checks.
     sequence_start: int = 0  # Shard start index for parallel CALVIN evaluation.
+    sequence_end: int = -1  # Optional exclusive end index; use with sequence_start for contiguous worker shards.
     sequence_stride: int = 1  # Shard stride; use one worker per stride slot.
     num_workers: int = 1  # For future multi-process support
     seed: int = 0
@@ -285,6 +310,8 @@ class CalvinPolicyClient:
         port: int,
         resize_size: int = 224,
         replan_steps: int = 5,
+        use_ddim: bool = True,
+        num_ddim_steps: int = 10,
         pretrained_path: str = "",
         unnorm_key: str = "",
     ):
@@ -293,6 +320,8 @@ class CalvinPolicyClient:
             policy_setup="franka",
             horizon=0,
             action_ensemble=False,
+            use_ddim=use_ddim,
+            num_ddim_steps=num_ddim_steps,
             host=host,
             port=port,
         )
@@ -300,11 +329,69 @@ class CalvinPolicyClient:
         self.replan_steps = replan_steps
         self.pretrained_path = pretrained_path
         self.step_count = 0
+        self.server_metadata = getattr(self.client, "_server_metadata", {}) or {}
+        self.state_dim = self._resolve_state_dim(self.server_metadata)
+        self.state_slice = os.environ.get("STARVLA_CALVIN_STATE_SLICE", "first").strip().lower()
+        self._state_adapt_warned = False
+        print(
+            "[starvla-calvin-eval] policy metadata "
+            f"action_dim={self.server_metadata.get('action_dim')} "
+            f"state_dim={self.server_metadata.get('state_dim')} "
+            f"chunk={self.server_metadata.get('action_chunk_size')} "
+            f"client_state_dim={self.state_dim} "
+            f"state_slice={self.state_slice}",
+            flush=True,
+        )
 
     def reset(self):
         """Reset action plan buffer."""
         self.step_count = 0
         self.client.reset(None)
+
+    @staticmethod
+    def _resolve_state_dim(metadata: dict) -> int:
+        env_value = os.environ.get("STARVLA_CALVIN_STATE_DIM", "auto").strip().lower()
+        if env_value not in {"", "auto", "default", "metadata"}:
+            try:
+                parsed = int(env_value)
+                if parsed > 0:
+                    return parsed
+            except ValueError:
+                logger.warning("Ignoring invalid STARVLA_CALVIN_STATE_DIM=%r; using metadata/default", env_value)
+        for key in ("state_dim", "proprio_dim"):
+            try:
+                parsed = int(metadata.get(key))
+                if parsed > 0:
+                    return parsed
+            except (TypeError, ValueError):
+                pass
+        return 7
+
+    def _state_from_obs(self, robot_obs) -> np.ndarray:
+        raw = np.asarray(robot_obs, dtype=np.float32).reshape(-1)
+        target = int(self.state_dim or 7)
+        if raw.shape[0] == target:
+            return raw
+        if raw.shape[0] > target:
+            if self.state_slice in {"first", "head", "eef", "eef7"}:
+                state = raw[:target]
+            elif self.state_slice in {"last", "tail"}:
+                state = raw[-target:]
+            else:
+                logger.warning("Unknown STARVLA_CALVIN_STATE_SLICE=%r; using first %d dims", self.state_slice, target)
+                state = raw[:target]
+        else:
+            state = np.pad(raw, (0, target - raw.shape[0]), mode="constant")
+        if not self._state_adapt_warned:
+            logger.warning(
+                "CALVIN client adapted robot_obs state from %d to %d dims using slice=%s. "
+                "This fixes checkpoint/client state_dim mismatches early.",
+                raw.shape[0],
+                target,
+                self.state_slice,
+            )
+            self._state_adapt_warned = True
+        return state.astype(np.float32, copy=False)
 
     def step(self, obs: dict, lang_annotation: str) -> np.ndarray:
         """
@@ -334,6 +421,7 @@ class CalvinPolicyClient:
         example = {
             "image": [image, wrist_image],
             "lang": lang_annotation,
+            "state": self._state_from_obs(obs["robot_obs"])[None, :],
         }
 
         # Query model
@@ -437,6 +525,7 @@ def evaluate_policy_ddp(
     num_sequences,
     max_steps_per_task=EP_LEN,
     sequence_start=0,
+    sequence_end=-1,
     sequence_stride=1,
     eval_log_dir=None,
     debug=False,
@@ -472,18 +561,28 @@ def evaluate_policy_ddp(
     eval_log_dir = get_log_dir(eval_log_dir)
     with open(eval_sequences_path, "r") as f:
         all_eval_sequences = json.load(f)
-    if num_sequences is None or num_sequences <= 0:
-        selected_eval_sequences = all_eval_sequences
-    else:
-        selected_eval_sequences = all_eval_sequences[: min(num_sequences, len(all_eval_sequences))]
+
     sequence_start = max(int(sequence_start or 0), 0)
+    sequence_end = -1 if sequence_end is None else int(sequence_end)
     sequence_stride = max(int(sequence_stride or 1), 1)
-    indexed_eval_sequences = list(enumerate(selected_eval_sequences))
-    eval_items = indexed_eval_sequences[sequence_start::sequence_stride]
+    if sequence_end >= 0:
+        sequence_end = min(max(sequence_end, sequence_start), len(all_eval_sequences))
+        selected_eval_sequences = all_eval_sequences[sequence_start:sequence_end]
+        indexed_eval_sequences = list(enumerate(selected_eval_sequences, start=sequence_start))
+        eval_items = indexed_eval_sequences[::sequence_stride]
+        selected_desc = f"[{sequence_start}, {sequence_end})"
+    else:
+        if num_sequences is None or num_sequences <= 0:
+            selected_eval_sequences = all_eval_sequences
+        else:
+            selected_eval_sequences = all_eval_sequences[: min(num_sequences, len(all_eval_sequences))]
+        indexed_eval_sequences = list(enumerate(selected_eval_sequences))
+        eval_items = indexed_eval_sequences[sequence_start::sequence_stride]
+        selected_desc = f"first {len(selected_eval_sequences)}"
     logger.info(
-        "Evaluating %d/%d selected CALVIN sequences from %d official sequences, shard=%d/%d, max_steps_per_task=%d",
+        "Evaluating %d CALVIN sequences from %s selected / %d official, shard_start=%d, shard_stride=%d, max_steps_per_task=%d",
         len(eval_items),
-        len(selected_eval_sequences),
+        selected_desc,
         len(all_eval_sequences),
         sequence_start,
         sequence_stride,
@@ -492,7 +591,7 @@ def evaluate_policy_ddp(
     if not eval_items:
         logger.warning("No CALVIN sequences assigned to shard start=%d stride=%d", sequence_start, sequence_stride)
         with open(eval_log_dir / "sequence_results.json", "w") as f:
-            json.dump([], f)
+            json.dump({"results": [], "num_sequences": 0, "sequences": []}, f, indent=2, sort_keys=True)
         return []
     # device_num = int(torch.distributed.get_world_size())
     # device_id = torch.distributed.get_rank()
@@ -501,6 +600,8 @@ def evaluate_policy_ddp(
     # eval_sequences = eval_sequences[device_id*interval_len:min((device_id+1)*interval_len, num_sequences)]
     results = []
     plans = defaultdict(list)
+    total_sequences = len(eval_items)
+    progress_start_time = time.time()
 
     if not debug:
         progress_iter = tqdm(eval_items, position=0, leave=True)
@@ -525,8 +626,22 @@ def evaluate_policy_ddp(
         )
         results.append(result)
         if not debug:
+            chain_success = count_success(results)
             progress_iter.set_description(
-                " ".join([f"{i + 1}/5 : {v * 100:.1f}% |" for i, v in enumerate(count_success(results))]) + "|"
+                " ".join([f"{i + 1}/5 : {v * 100:.1f}% |" for i, v in enumerate(chain_success)]) + "|"
+            )
+            elapsed = time.time() - progress_start_time
+            avg_seq_len = float(np.mean(results)) if results else 0.0
+            chain_text = ",".join(f"{i + 1}:{v * 100:.1f}%" for i, v in enumerate(chain_success))
+            print(
+                "[progress] "
+                f"sequence_index={original_sequence_i} "
+                f"local={len(results)}/{total_sequences} "
+                f"result={int(result)} "
+                f"avg_seq_len={avg_seq_len:.3f} "
+                f"chain_sr={chain_text} "
+                f"elapsed_sec={elapsed:.1f}",
+                flush=True,
             )
 
     def merge_multi_list(res):
@@ -553,7 +668,16 @@ def evaluate_policy_ddp(
             }
         )
     with open(eval_log_dir / "sequence_results.json", "w") as f:
-        json.dump(raw_results, f, indent=2, sort_keys=True)
+        json.dump(
+            {
+                "results": [int(result) for result in results],
+                "num_sequences": len(results),
+                "sequences": raw_results,
+            },
+            f,
+            indent=2,
+            sort_keys=True,
+        )
 
     return results
 
@@ -658,7 +782,7 @@ def rollout(
         lang_annotation = val_annotations[subtask][0]
     lang_annotation = lang_annotation.split("\n")[0]
     if "\u2019" in lang_annotation:
-        lang_annotation.replace("\u2019", "'")
+        lang_annotation = lang_annotation.replace("\u2019", "'")
     policy.reset()
     start_info = env.get_info()
 
@@ -705,6 +829,8 @@ def main(args: Args):
         args.port,
         args.resize_size,
         args.replan_steps,
+        args.use_ddim,
+        args.num_ddim_steps,
         pretrained_path=args.pretrained_path,
         unnorm_key=args.unnorm_key,
     )
@@ -719,6 +845,7 @@ def main(args: Args):
         args.num_sequences,
         args.max_steps_per_task,
         args.sequence_start,
+        args.sequence_end,
         args.sequence_stride,
         args.eval_log_dir,
         args.debug,
@@ -728,5 +855,61 @@ def main(args: Args):
     )
 
 
+def parse_args_without_tyro() -> Args:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--args.host", dest="host", default=Args.host)
+    parser.add_argument("--args.port", dest="port", type=int, default=Args.port)
+    parser.add_argument("--args.resize-size", "--args.resize_size", dest="resize_size", type=int, default=Args.resize_size)
+    parser.add_argument("--args.replan-steps", "--args.replan_steps", dest="replan_steps", type=int, default=Args.replan_steps)
+    parser.add_argument("--args.use-ddim", "--args.use_ddim", dest="use_ddim", action="store_true", default=Args.use_ddim)
+    parser.add_argument("--args.no-use-ddim", "--args.no_use_ddim", dest="use_ddim", action="store_false")
+    parser.add_argument(
+        "--args.num-ddim-steps",
+        "--args.num_ddim_steps",
+        dest="num_ddim_steps",
+        type=int,
+        default=Args.num_ddim_steps,
+    )
+    parser.add_argument("--args.pretrained-path", "--args.pretrained_path", dest="pretrained_path", default=Args.pretrained_path)
+    parser.add_argument("--args.unnorm-key", "--args.unnorm_key", dest="unnorm_key", default=Args.unnorm_key)
+    parser.add_argument("--args.dataset-path", "--args.dataset_path", dest="dataset_path", default=Args.dataset_path)
+    parser.add_argument(
+        "--args.calvin-config-path",
+        "--args.calvin_config_path",
+        dest="calvin_config_path",
+        default=Args.calvin_config_path,
+    )
+    parser.add_argument(
+        "--args.eval-sequences-path",
+        "--args.eval_sequences_path",
+        dest="eval_sequences_path",
+        default=Args.eval_sequences_path,
+    )
+    parser.add_argument("--args.num-sequences", "--args.num_sequences", dest="num_sequences", type=int, default=Args.num_sequences)
+    parser.add_argument(
+        "--args.max-steps-per-task",
+        "--args.max_steps_per_task",
+        dest="max_steps_per_task",
+        type=int,
+        default=Args.max_steps_per_task,
+    )
+    parser.add_argument("--args.sequence-start", "--args.sequence_start", dest="sequence_start", type=int, default=Args.sequence_start)
+    parser.add_argument("--args.sequence-end", "--args.sequence_end", dest="sequence_end", type=int, default=Args.sequence_end)
+    parser.add_argument("--args.sequence-stride", "--args.sequence_stride", dest="sequence_stride", type=int, default=Args.sequence_stride)
+    parser.add_argument("--args.num-workers", "--args.num_workers", dest="num_workers", type=int, default=Args.num_workers)
+    parser.add_argument("--args.seed", dest="seed", type=int, default=Args.seed)
+    parser.add_argument("--args.create-plan-tsne", "--args.create_plan_tsne", dest="create_plan_tsne", action="store_true")
+    parser.add_argument("--args.debug", dest="debug", action="store_true")
+    parser.add_argument("--args.eval-log-dir", "--args.eval_log_dir", dest="eval_log_dir", default=Args.eval_log_dir)
+    parser.add_argument("--args.reset", dest="reset", action="store_true")
+    parser.add_argument("--args.diverse-inst", "--args.diverse_inst", dest="diverse_inst", action="store_true")
+    return Args(**vars(parser.parse_args()))
+
+
 if __name__ == "__main__":
-    tyro.cli(main)
+    if tyro is not None:
+        tyro.cli(main)
+    else:
+        main(parse_args_without_tyro())

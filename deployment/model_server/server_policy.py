@@ -18,6 +18,14 @@ def main(args) -> None:
     eval clients (LIBERO / SimplerEnv / etc.) just need to forward `examples`
     and consume already-unnormalized actions from the response.
     """
+    if args.idle_timeout > 0 and not env_flag("STARVLA_ALLOW_IDLE_TIMEOUT"):
+        logging.warning(
+            "Ignoring positive idle_timeout=%s so evaluation is not interrupted by inactivity. "
+            "Set STARVLA_ALLOW_IDLE_TIMEOUT=1 to opt in.",
+            args.idle_timeout,
+        )
+        args.idle_timeout = -1
+
     wrapper = PolicyServerWrapper(
         ckpt_path=args.ckpt_path,
         device="cuda",
@@ -45,7 +53,7 @@ def build_argparser():
     parser.add_argument("--ckpt_path", type=str, default="Qwen/Qwen2.5-VL-3B-Instruct")
     parser.add_argument("--port", type=int, default=10093)
     parser.add_argument("--use_bf16", action="store_true")
-    parser.add_argument("--idle_timeout", type=int, default=1800, help="Idle timeout in seconds, -1 means never close")
+    parser.add_argument("--idle_timeout", type=int, default=-1, help="Idle timeout in seconds, -1 means never close")
     parser.add_argument("--debugpy", action="store_true", help="explicitly wait for a debugpy attach; disabled by default")
     return parser
 

@@ -1,10 +1,17 @@
 #!/bin/bash
+set -euo pipefail
 
 ###########################################################################################
 # === Please modify the following paths according to your environment ===
-CALVIN_HOME=${CALVIN_HOME:-$(pwd)/playground/Code/calvin}
-export PYTHONPATH=$(pwd):${CALVIN_HOME}:${CALVIN_HOME}/calvin_env:${CALVIN_HOME}/calvin_env/tacto:${CALVIN_HOME}/calvin_models:${PYTHONPATH:-}
-export calvin_python=${calvin_python:-$(pwd)/env/starvla-py310/bin/python}
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=${REPO_ROOT:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}
+cd "${REPO_ROOT}"
+unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+DATA_ROOT=${STARVLA_DATA_ROOT:-$(dirname "${REPO_ROOT}")/data/starvla}
+DEFAULT_CKPT=${DEFAULT_CKPT:-${DATA_ROOT}/checkpoints/qwen35_0_8b-QwenPI-calvin_task_ABC/interactive_calvin_0519_071115/final_model/pytorch_model.pt}
+CALVIN_HOME=${CALVIN_HOME:-${REPO_ROOT}/playground/Code/calvin}
+export PYTHONPATH=${REPO_ROOT}:${CALVIN_HOME}:${CALVIN_HOME}/calvin_env:${CALVIN_HOME}/calvin_env/tacto:${CALVIN_HOME}/calvin_models:${PYTHONPATH:-}
+export calvin_python=${calvin_python:-${REPO_ROOT}/env/starvla-py310/bin/python}
 export MPLCONFIGDIR=${MPLCONFIGDIR:-/tmp/starvla-mplconfig-${USER:-user}}
 export XDG_CACHE_HOME=${XDG_CACHE_HOME:-/tmp/starvla-cache-${USER:-user}}
 export MESA_SHADER_CACHE_DIR=${MESA_SHADER_CACHE_DIR:-${XDG_CACHE_HOME}/mesa_shader_cache}
@@ -13,6 +20,8 @@ export STARVLA_ENABLE_DEBUGPY=${STARVLA_ENABLE_DEBUGPY:-0}
 export WANDB_MODE=${WANDB_MODE:-disabled}
 export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-false}
 export STARVLA_CALVIN_RENDER_BACKEND=${STARVLA_CALVIN_RENDER_BACKEND:-auto}
+export STARVLA_CALVIN_STATE_DIM=${STARVLA_CALVIN_STATE_DIM:-auto}
+export STARVLA_CALVIN_STATE_SLICE=${STARVLA_CALVIN_STATE_SLICE:-first}
 
 _starvla_calvin_use_egl() {
     export STARVLA_CALVIN_RENDER_BACKEND=egl
@@ -129,19 +138,27 @@ esac
 host=${host:-127.0.0.1}
 base_port=${base_port:-5694}
 unnorm_key=${unnorm_key:-franka}
-your_ckpt=${your_ckpt:-results/Checkpoints/0118_starvla_qwenpi_calvin_task_ABC_D/checkpoints/steps_30000_pytorch_model.pt}
+your_ckpt=${your_ckpt:-${CKPT_PATH:-${DEFAULT_CKPT}}}
 dataset_path=${dataset_path:-/inspire/qb-ilm2/project/26summer-camp-10/public/inspire_shared/calvin_d_d/validation}
 calvin_config_path=${calvin_config_path:-${CALVIN_HOME}/calvin_models/conf}
-eval_sequences_path=${eval_sequences_path:-$(pwd)/examples/calvin/eval_files/eval_sequences.json}
+eval_sequences_path=${eval_sequences_path:-${REPO_ROOT}/examples/calvin/eval_files/eval_sequences.json}
 num_sequences=${num_sequences:-1000}
 max_steps_per_task=${max_steps_per_task:-360}
+num_ddim_steps=${num_ddim_steps:-10}
 sequence_start=${sequence_start:-0}
+sequence_end=${sequence_end:--1}
 sequence_stride=${sequence_stride:-1}
 eval_log_dir=${eval_log_dir:-${STARVLA_JOB_DIR:-$(pwd)/logs/calvin_eval_$(date +"%Y%m%d_%H%M%S")}}
 
 folder_name=$(echo "$your_ckpt" | awk -F'/' '{print $(NF-2)"_"$(NF-1)"_"$NF}')
 # === End of environment variable configuration ===
 ###########################################################################################
+
+if [[ ! -f "${your_ckpt}" ]]; then
+    echo "[starvla-calvin-eval] Checkpoint not found: ${your_ckpt}" >&2
+    echo "[starvla-calvin-eval] Set CKPT_PATH=/path/to/pytorch_model.pt or your_ckpt=/path/to/pytorch_model.pt" >&2
+    exit 1
+fi
 
 mkdir -p "${eval_log_dir}" "${MPLCONFIGDIR}" "${MESA_SHADER_CACHE_DIR}"
 
@@ -151,7 +168,9 @@ echo "[starvla-calvin-eval] calvin_config_path=${calvin_config_path}"
 echo "[starvla-calvin-eval] eval_sequences_path=${eval_sequences_path}"
 echo "[starvla-calvin-eval] num_sequences=${num_sequences}"
 echo "[starvla-calvin-eval] max_steps_per_task=${max_steps_per_task}"
+echo "[starvla-calvin-eval] num_ddim_steps=${num_ddim_steps}"
 echo "[starvla-calvin-eval] sequence_start=${sequence_start}"
+echo "[starvla-calvin-eval] sequence_end=${sequence_end}"
 echo "[starvla-calvin-eval] sequence_stride=${sequence_stride}"
 echo "[starvla-calvin-eval] eval_log_dir=${eval_log_dir}"
 echo "[starvla-calvin-eval] python=${calvin_python}"
@@ -160,6 +179,8 @@ echo "[starvla-calvin-eval] render_backend=${STARVLA_CALVIN_RENDER_BACKEND}"
 echo "[starvla-calvin-eval] render_gpu=${STARVLA_CALVIN_RENDER_GPU:-auto}"
 echo "[starvla-calvin-eval] PYOPENGL_PLATFORM=${PYOPENGL_PLATFORM:-}"
 echo "[starvla-calvin-eval] MUJOCO_GL=${MUJOCO_GL:-}"
+echo "[starvla-calvin-eval] state_dim=${STARVLA_CALVIN_STATE_DIM}"
+echo "[starvla-calvin-eval] state_slice=${STARVLA_CALVIN_STATE_SLICE}"
 
 "${calvin_python}" ./examples/calvin/eval_files/eval_calvin.py \
     --args.pretrained-path "${your_ckpt}" \
@@ -171,7 +192,9 @@ echo "[starvla-calvin-eval] MUJOCO_GL=${MUJOCO_GL:-}"
     --args.eval_sequences_path "${eval_sequences_path}" \
     --args.eval_log_dir "${eval_log_dir}" \
     --args.num_sequences "${num_sequences}" \
+    --args.num_ddim_steps "${num_ddim_steps}" \
     --args.max_steps_per_task "${max_steps_per_task}" \
     --args.sequence_start "${sequence_start}" \
+    --args.sequence_end "${sequence_end}" \
     --args.sequence_stride "${sequence_stride}" \
     "$@"

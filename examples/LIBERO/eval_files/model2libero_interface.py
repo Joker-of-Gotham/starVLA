@@ -114,6 +114,7 @@ class ModelClient:
             vla_input = {
                 "examples": [example],
                 "unnorm_key": self.unnorm_key,
+                "step": step,
                 "do_sample": False,
                 "use_ddim": self.use_ddim,
                 "num_ddim_steps": self.num_ddim_steps,

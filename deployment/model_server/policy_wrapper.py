@@ -22,6 +22,7 @@ Exposed API:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -62,6 +63,13 @@ class PolicyServerWrapper:
         # Co-located metadata.
         model_cfg, _ = read_mode_config(self._ckpt_path)
         self._model_cfg = model_cfg
+        self._state_adaptation_warned: set[tuple[int, int]] = set()
+        runtime_cfg = model_cfg.get("trainer", {}).get("policy_runtime", {})
+        structure_policies = str(runtime_cfg.get("structure_policies", "") or "")
+        self._safety_projection = (
+            "S27" in {item.strip() for item in structure_policies.replace(",", " ").split()}
+            or os.getenv("STARVLA_POLICY_SAFETY_PROJECTION", "0").strip().lower() in {"1", "true", "yes", "on"}
+        )
 
         # action_chunk_size = future_action_window_size + 1 (matches old client).
         action_model_cfg = model_cfg["framework"]["action_model"]
@@ -116,10 +124,17 @@ class PolicyServerWrapper:
     @property
     def metadata(self) -> Dict[str, Any]:
         """Model-invariant metadata; sent to client at websocket handshake."""
+        action_model_cfg = self._model_cfg.get("framework", {}).get("action_model", {})
         base = {
             "env": "starvla_policy_server",
             "ckpt_path": self._ckpt_path,
             "action_chunk_size": self._action_chunk_size,
+            "action_dim": action_model_cfg.get("action_dim"),
+            "state_dim": action_model_cfg.get("state_dim"),
+            "action_horizon": action_model_cfg.get("action_horizon"),
+            "future_action_window_size": action_model_cfg.get("future_action_window_size"),
+            "action_model_type": action_model_cfg.get("action_model_type"),
+            "safety_projection": self._safety_projection,
             "available_unnorm_keys": self._available_unnorm_keys,
             "default_unnorm_key": self._default_unnorm_key,
         }
@@ -129,6 +144,49 @@ class PolicyServerWrapper:
             base["action_keys"] = proc.action_keys
             base["state_keys"] = proc.state_keys
         return base
+
+    def _expected_state_dim(self) -> int | None:
+        action_model_cfg = self._model_cfg.get("framework", {}).get("action_model", {})
+        value = action_model_cfg.get("state_dim")
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    def _adapt_example_state(self, example: dict) -> dict:
+        if os.getenv("STARVLA_POLICY_STATE_ADAPT", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return example
+        expected = self._expected_state_dim()
+        if expected is None or "state" not in example:
+            return example
+        state = np.asarray(example["state"], dtype=np.float32)
+        if state.ndim == 1:
+            state = state[None, :]
+        if state.shape[-1] == expected:
+            return example
+
+        actual = int(state.shape[-1])
+        if actual > expected:
+            adapted = state[..., :expected]
+        else:
+            pad_width = [(0, 0)] * state.ndim
+            pad_width[-1] = (0, expected - actual)
+            adapted = np.pad(state, pad_width, mode="constant")
+
+        key = (actual, expected)
+        if key not in self._state_adaptation_warned:
+            logging.warning(
+                "PolicyServerWrapper adapted example state_dim from %d to %d for checkpoint %s. "
+                "Set STARVLA_POLICY_STATE_ADAPT=0 to disable this guard.",
+                actual,
+                expected,
+                self._ckpt_path,
+            )
+            self._state_adaptation_warned.add(key)
+        new_example = dict(example)
+        new_example["state"] = adapted
+        return new_example
 
     def predict_action(
         self,
@@ -159,12 +217,19 @@ class PolicyServerWrapper:
                 )
         proc = self._get_processor(effective_key)
 
+        prepared_examples = [self._adapt_example_state(example) for example in examples]
+
         with torch.inference_mode():
-            out = self._framework.predict_action(examples=examples, **kwargs)
+            out = self._framework.predict_action(examples=prepared_examples, **kwargs)
         normalized = np.asarray(out["normalized_actions"])  # (B, T, D)
 
         unnorm = np.stack(
             [proc.unapply_actions(normalized[b]) for b in range(normalized.shape[0])],
             axis=0,
         )
+        if self._safety_projection:
+            low = float(os.getenv("STARVLA_POLICY_ACTION_LOW", "-1000.0"))
+            high = float(os.getenv("STARVLA_POLICY_ACTION_HIGH", "1000.0"))
+            unnorm = np.nan_to_num(unnorm, nan=0.0, posinf=high, neginf=low)
+            unnorm = np.clip(unnorm, low, high)
         return {"actions": unnorm}
