@@ -37,6 +37,7 @@ from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.trainer_utils.checkpointing import cfg_bool, cfg_get, cfg_str, checkpoint_summary, latest_state_checkpoint, parse_step_from_path, update_latest_state_link, update_topk_checkpoints
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
+from starVLA.training.trainer_utils.policy_runtime import PolicyRuntime
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
 
 deepspeed_plugin = DeepSpeedPlugin()
@@ -86,6 +87,7 @@ class VLAMTrainer(TrainerUtils):
         self.vlm_train_dataloader = vlm_train_dataloader
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
+        self.policy_runtime = PolicyRuntime.from_config(cfg)
         self.accelerator = accelerator
 
         self.completed_steps = 0
@@ -125,6 +127,8 @@ class VLAMTrainer(TrainerUtils):
         )
 
         self._resume_full_state_if_needed()
+        if self.accelerator.is_main_process and self.policy_runtime.enabled:
+            logger.info(f"Policy runtime enabled: {self.policy_runtime.describe()}")
         self._init_wandb()
 
     def _save_initial_configs(self):
@@ -504,13 +508,23 @@ class VLAMTrainer(TrainerUtils):
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
-                total_loss = action_loss
+                total_loss, policy_metrics = self.policy_runtime.apply_action_loss(
+                    action_loss=action_loss,
+                    output_dict=output_dict,
+                    model=self.model,
+                    batch=batch_vla,
+                )
             self.accelerator.backward(total_loss)
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 unwrapped = self.accelerator.unwrap_model(self.model)
                 vlm_output = unwrapped.qwen_vl_interface(**batch_vlm)
                 vlm_loss = vlm_output.loss * self.config.trainer.loss_scale.vlm
+                vlm_loss, vlm_policy_metrics = self.policy_runtime.apply_vlm_loss(
+                    vlm_loss=vlm_loss,
+                    model=self.model,
+                    batch=batch_vlm,
+                )
             self.accelerator.backward(vlm_loss)
 
             if self.config.trainer.gradient_clipping is not None:
@@ -528,6 +542,8 @@ class VLAMTrainer(TrainerUtils):
                     "vlm_loss": vlm_loss.item(),
                 }
             )
+            log_dict.update(policy_metrics)
+            log_dict.update({f"vlm_{key}": value for key, value in vlm_policy_metrics.items()})
 
         return log_dict
 

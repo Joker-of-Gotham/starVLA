@@ -60,7 +60,11 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
         from starVLA.dataloader.lerobot_datasets import get_vla_dataset, collate_fn
         vla_dataset_cfg = cfg.datasets.vla_data
 
-        vla_dataset = get_vla_dataset(data_cfg=vla_dataset_cfg)
+        vla_dataset = get_vla_dataset(
+            data_cfg=vla_dataset_cfg,
+            balance_dataset_weights=bool(_cfg_get(vla_dataset_cfg, "balance_dataset_weights", False)),
+            balance_trajectory_weights=bool(_cfg_get(vla_dataset_cfg, "balance_trajectory_weights", False)),
+        )
         
         vla_train_dataloader = DataLoader(
             vla_dataset,

@@ -35,6 +35,7 @@ from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.training.trainer_utils.checkpointing import cfg_bool, cfg_str, checkpoint_summary, latest_state_checkpoint, parse_step_from_path, update_latest_state_link, update_topk_checkpoints
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
+from starVLA.training.trainer_utils.policy_runtime import PolicyRuntime
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
 
 deepspeed_plugin = DeepSpeedPlugin()
@@ -82,6 +83,7 @@ class VLAMTrainer(TrainerUtils):
         self.vlm_train_dataloader = vlm_train_dataloader
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
+        self.policy_runtime = PolicyRuntime.from_config(cfg)
         self.accelerator = accelerator
 
         self.completed_steps = 0
@@ -113,6 +115,8 @@ class VLAMTrainer(TrainerUtils):
         )
 
         self._resume_full_state_if_needed()
+        if self.accelerator.is_main_process and self.policy_runtime.enabled:
+            logger.info(f"Policy runtime enabled: {self.policy_runtime.describe()}")
         self._init_wandb()
 
     def _save_initial_configs(self):
@@ -450,6 +454,11 @@ class VLAMTrainer(TrainerUtils):
                 unwrapped = self.accelerator.unwrap_model(self.model)
                 vlm_output = unwrapped.qwen_vl_interface(**batch_vlm)
                 vlm_loss = vlm_output.loss * self.config.trainer.loss_scale.vlm
+                vlm_loss, policy_metrics = self.policy_runtime.apply_vlm_loss(
+                    vlm_loss=vlm_loss,
+                    model=self.model,
+                    batch=batch_vlm,
+                )
             self.accelerator.backward(vlm_loss)
 
             if self.config.trainer.gradient_clipping is not None:
@@ -461,6 +470,7 @@ class VLAMTrainer(TrainerUtils):
             if self.accelerator.sync_gradients:
                 self.lr_scheduler.step()
             log_dict["vlm_loss"] = vlm_loss.item()
+            log_dict.update(policy_metrics)
 
         return log_dict
 
