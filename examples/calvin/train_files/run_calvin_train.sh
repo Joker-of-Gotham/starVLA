@@ -13,13 +13,13 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 # === Please modify the following paths according to your environment ===
 Framework_name=QwenPI
 freeze_module_list=''
-base_vlm=playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action
+base_vlm=playground/Pretrained_models/Qwen3.5-0.8B
 config_yaml=./examples/calvin/train_files/starvla_train_calvin.yaml
 DIT_TYPE="DiT-B"
 calvin_data_root=playground/Datasets/calvin
-data_mix=calvin_task_D_D
+data_mix=calvin_task_ABC
 run_root_dir=./results/Checkpoints
-run_id=0118_starvla_qwenpi_calvin_task_D_D
+run_id=0118_starvla_qwenpi_calvin_task_ABC
 export action_input_dim=2048
 # === End of environment variable configuration ===
 ###########################################################################################
@@ -45,7 +45,7 @@ accelerate launch \
   --trainer.vla_data.video_backend torchvision_av \
   --trainer.freeze_modules ${freeze_module_list} \
   --trainer.max_train_steps 30000 \
-  --trainer.save_interval 10000 \
+  --trainer.save_interval 100 \
   --trainer.logging_frequency 100 \
   --trainer.eval_interval 100 \
   --run_root_dir ${run_root_dir} \

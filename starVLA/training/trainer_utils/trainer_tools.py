@@ -185,6 +185,55 @@ import torch.distributed as dist
 
 class TrainerUtils:
     @staticmethod
+    def configure_torch_runtime(logger_obj=None):
+        """Enable safe CUDA math/runtime defaults for H200-class training."""
+        try:
+            torch.set_float32_matmul_precision("high")
+            if torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                torch.backends.cudnn.benchmark = True
+            if logger_obj is not None:
+                logger_obj.info("Torch runtime configured: matmul_precision=high, tf32_allowed=True, cudnn_benchmark=True")
+        except Exception as exc:
+            if logger_obj is not None:
+                logger_obj.warning(f"Torch runtime performance configuration skipped: {exc}")
+
+    @staticmethod
+    def dataloader_len(dataloader) -> int | None:
+        try:
+            length = len(dataloader)
+        except TypeError:
+            return None
+        return int(length) if length else None
+
+    @staticmethod
+    def progress_metrics(
+        *,
+        completed_steps: int,
+        batches_seen: int,
+        dataloader,
+        max_train_steps: int,
+        gradient_accumulation_steps: int = 1,
+        prefix: str = "",
+    ) -> dict:
+        length = TrainerUtils.dataloader_len(dataloader)
+        if not length:
+            return {}
+        grad_accum = max(int(gradient_accumulation_steps or 1), 1)
+        total_batches = max_train_steps * grad_accum
+        epoch_value = batches_seen / length
+        key = f"{prefix}_" if prefix else ""
+        return {
+            f"{key}epoch": round(epoch_value, 4),
+            f"{key}epoch_index": int(epoch_value) + 1,
+            f"{key}epoch_batch": int(batches_seen % length),
+            f"{key}steps_per_epoch": length,
+            f"{key}total_epochs": round(total_batches / length, 4),
+            f"{key}data_batches_seen": int(batches_seen),
+        }
+
+    @staticmethod
     def freeze_backbones(model, freeze_modules=""):
         """
         directly freeze the specified submodules based on the relative module path list (patterns), no longer recursively find all submodule names:
