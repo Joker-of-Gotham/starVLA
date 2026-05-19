@@ -2,25 +2,176 @@
 
 ###########################################################################################
 # === Please modify the following paths according to your environment ===
-export PYTHONPATH=$(pwd):${PYTHONPATH} # let Calvin client find websocket tools from main repo
-export calvin_python=/path/to/your/conda/envs/calvin/bin/python
+CALVIN_HOME=${CALVIN_HOME:-$(pwd)/playground/Code/calvin}
+export PYTHONPATH=$(pwd):${CALVIN_HOME}:${CALVIN_HOME}/calvin_env:${CALVIN_HOME}/calvin_env/tacto:${CALVIN_HOME}/calvin_models:${PYTHONPATH:-}
+export calvin_python=${calvin_python:-$(pwd)/env/starvla-py310/bin/python}
+export MPLCONFIGDIR=${MPLCONFIGDIR:-/tmp/starvla-mplconfig-${USER:-user}}
+export XDG_CACHE_HOME=${XDG_CACHE_HOME:-/tmp/starvla-cache-${USER:-user}}
+export MESA_SHADER_CACHE_DIR=${MESA_SHADER_CACHE_DIR:-${XDG_CACHE_HOME}/mesa_shader_cache}
+unset DEBUG
+export STARVLA_ENABLE_DEBUGPY=${STARVLA_ENABLE_DEBUGPY:-0}
+export WANDB_MODE=${WANDB_MODE:-disabled}
+export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-false}
+export STARVLA_CALVIN_RENDER_BACKEND=${STARVLA_CALVIN_RENDER_BACKEND:-auto}
 
-host="127.0.0.1"
-base_port=5694
-unnorm_key="franka"
-your_ckpt=results/Checkpoints/0123_starvla_qwen3_calvin_task_D_D/checkpoints/steps_30000_pytorch_model.pt
+_starvla_calvin_use_egl() {
+    export STARVLA_CALVIN_RENDER_BACKEND=egl
+    export PYOPENGL_PLATFORM=egl
+    export MUJOCO_GL=egl
+    export LIBGL_ALWAYS_SOFTWARE=0
+}
+
+_starvla_calvin_use_direct() {
+    export STARVLA_CALVIN_RENDER_BACKEND=direct
+    export PYOPENGL_PLATFORM=osmesa
+    export MUJOCO_GL=osmesa
+    export LIBGL_ALWAYS_SOFTWARE=1
+    unset EGL_VISIBLE_DEVICE
+    unset EGL_VISIBLE_DEVICES
+}
+
+_starvla_calvin_egl_preflight() {
+    PYOPENGL_PLATFORM=egl MUJOCO_GL=egl LIBGL_ALWAYS_SOFTWARE=0 "${calvin_python}" - <<'PY' >/dev/null 2>&1
+import os
+import pkgutil
+import pybullet as p
+
+render_gpu = os.environ.get("STARVLA_CALVIN_RENDER_GPU", "").strip()
+if render_gpu:
+    try:
+        from calvin_env.utils.utils import get_egl_device_id
+
+        egl_id = get_egl_device_id(int(render_gpu.split(",")[0]))
+        os.environ["EGL_VISIBLE_DEVICES"] = str(egl_id)
+        os.environ["EGL_VISIBLE_DEVICE"] = str(egl_id)
+    except Exception:
+        pass
+
+cid = p.connect(p.DIRECT, options="--width=16 --height=16")
+try:
+    egl = pkgutil.get_loader("eglRenderer")
+    plugin = p.loadPlugin(egl.get_filename(), "_eglRendererPlugin") if egl else p.loadPlugin("eglRendererPlugin")
+    if plugin < 0:
+        raise SystemExit(1)
+finally:
+    p.disconnect(cid)
+PY
+}
+
+_starvla_calvin_cached_egl_preflight() {
+    local gpu_key cache_dir status_file lock_dir waited result
+    gpu_key=${STARVLA_CALVIN_RENDER_GPU:-auto}
+    gpu_key=${gpu_key//[^A-Za-z0-9_.-]/_}
+    if [[ -n "${STARVLA_JOB_DIR:-}" ]]; then
+        cache_dir="${STARVLA_JOB_DIR}/calvin_eval/egl_preflight"
+    else
+        cache_dir="${XDG_CACHE_HOME}/starvla_calvin_egl_preflight"
+    fi
+    status_file="${cache_dir}/gpu_${gpu_key}.status"
+    lock_dir="${cache_dir}/gpu_${gpu_key}.lock"
+    mkdir -p "${cache_dir}"
+
+    if [[ -s "${status_file}" ]]; then
+        cat "${status_file}"
+        return 0
+    fi
+
+    if mkdir "${lock_dir}" 2>/dev/null; then
+        result=direct
+        if _starvla_calvin_egl_preflight; then
+            result=egl
+        fi
+        printf '%s\n' "${result}" > "${status_file}.$$"
+        mv "${status_file}.$$" "${status_file}"
+        rmdir "${lock_dir}" 2>/dev/null || true
+        cat "${status_file}"
+        return 0
+    fi
+
+    waited=0
+    while [[ "${waited}" -lt 120 ]]; do
+        if [[ -s "${status_file}" ]]; then
+            cat "${status_file}"
+            return 0
+        fi
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+
+    if _starvla_calvin_egl_preflight; then
+        echo egl
+    else
+        echo direct
+    fi
+}
+
+case "${STARVLA_CALVIN_RENDER_BACKEND}" in
+    egl|gpu|cuda|fast)
+        _starvla_calvin_use_egl
+        ;;
+    direct|osmesa|safe|cpu)
+        _starvla_calvin_use_direct
+        ;;
+    auto|"")
+        if [[ "$(_starvla_calvin_cached_egl_preflight)" == "egl" ]]; then
+            _starvla_calvin_use_egl
+        else
+            echo "[starvla-calvin-eval] EGL preflight failed or was cached as unavailable; falling back to direct/osmesa rendering."
+            _starvla_calvin_use_direct
+        fi
+        ;;
+    *)
+        echo "[starvla-calvin-eval] Unknown STARVLA_CALVIN_RENDER_BACKEND=${STARVLA_CALVIN_RENDER_BACKEND}; using direct/osmesa."
+        _starvla_calvin_use_direct
+        ;;
+esac
+
+host=${host:-127.0.0.1}
+base_port=${base_port:-5694}
+unnorm_key=${unnorm_key:-franka}
+your_ckpt=${your_ckpt:-results/Checkpoints/0118_starvla_qwenpi_calvin_task_ABC_D/checkpoints/steps_30000_pytorch_model.pt}
+dataset_path=${dataset_path:-/inspire/qb-ilm2/project/26summer-camp-10/public/inspire_shared/calvin_d_d/validation}
+calvin_config_path=${calvin_config_path:-${CALVIN_HOME}/calvin_models/conf}
+eval_sequences_path=${eval_sequences_path:-$(pwd)/examples/calvin/eval_files/eval_sequences.json}
+num_sequences=${num_sequences:-1000}
+max_steps_per_task=${max_steps_per_task:-360}
+sequence_start=${sequence_start:-0}
+sequence_stride=${sequence_stride:-1}
+eval_log_dir=${eval_log_dir:-${STARVLA_JOB_DIR:-$(pwd)/logs/calvin_eval_$(date +"%Y%m%d_%H%M%S")}}
 
 folder_name=$(echo "$your_ckpt" | awk -F'/' '{print $(NF-2)"_"$(NF-1)"_"$NF}')
 # === End of environment variable configuration ===
 ###########################################################################################
 
-LOG_DIR="logs/$(date +"%Y%m%d_%H%M%S")"
-mkdir -p ${LOG_DIR}
+mkdir -p "${eval_log_dir}" "${MPLCONFIGDIR}" "${MESA_SHADER_CACHE_DIR}"
 
-${calvin_python} ./examples/calvin/eval_files/eval_calvin.py \
-    --args.pretrained-path ${your_ckpt} \
-    --args.unnorm-key ${unnorm_key} \
+echo "[starvla-calvin-eval] ckpt=${your_ckpt}"
+echo "[starvla-calvin-eval] dataset_path=${dataset_path}"
+echo "[starvla-calvin-eval] calvin_config_path=${calvin_config_path}"
+echo "[starvla-calvin-eval] eval_sequences_path=${eval_sequences_path}"
+echo "[starvla-calvin-eval] num_sequences=${num_sequences}"
+echo "[starvla-calvin-eval] max_steps_per_task=${max_steps_per_task}"
+echo "[starvla-calvin-eval] sequence_start=${sequence_start}"
+echo "[starvla-calvin-eval] sequence_stride=${sequence_stride}"
+echo "[starvla-calvin-eval] eval_log_dir=${eval_log_dir}"
+echo "[starvla-calvin-eval] python=${calvin_python}"
+echo "[starvla-calvin-eval] CALVIN_HOME=${CALVIN_HOME}"
+echo "[starvla-calvin-eval] render_backend=${STARVLA_CALVIN_RENDER_BACKEND}"
+echo "[starvla-calvin-eval] render_gpu=${STARVLA_CALVIN_RENDER_GPU:-auto}"
+echo "[starvla-calvin-eval] PYOPENGL_PLATFORM=${PYOPENGL_PLATFORM:-}"
+echo "[starvla-calvin-eval] MUJOCO_GL=${MUJOCO_GL:-}"
+
+"${calvin_python}" ./examples/calvin/eval_files/eval_calvin.py \
+    --args.pretrained-path "${your_ckpt}" \
+    --args.unnorm-key "${unnorm_key}" \
     --args.host "$host" \
-    --args.port $base_port \
-    --args.dataset_path /path/to/calvin/task_D_D/ \
-    --args.num_sequences 1000
+    --args.port "$base_port" \
+    --args.dataset_path "${dataset_path}" \
+    --args.calvin_config_path "${calvin_config_path}" \
+    --args.eval_sequences_path "${eval_sequences_path}" \
+    --args.eval_log_dir "${eval_log_dir}" \
+    --args.num_sequences "${num_sequences}" \
+    --args.max_steps_per_task "${max_steps_per_task}" \
+    --args.sequence_start "${sequence_start}" \
+    --args.sequence_stride "${sequence_stride}" \
+    "$@"

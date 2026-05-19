@@ -16,29 +16,20 @@ Usage:
 """
 
 import copy
+import contextlib
 import dataclasses
 import json
 import logging
 import os
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
+from math import pi
 from pathlib import Path
 
 import hydra
 import numpy as np
 import tyro
 
-# # Add Calvin to path
-# CALVIN_ROOT = Path(__file__).resolve().parents[2] / "third_party" / "calvin"
-# sys.path.insert(0, str(CALVIN_ROOT))
-from calvin_agent.evaluation.utils import (
-    collect_plan,
-    count_success,
-    get_env_state_for_initial_condition,
-    get_log_dir,
-    print_and_save,
-)
-from moviepy.editor import ImageSequenceClip
 from omegaconf import OmegaConf
 from termcolor import colored
 from tqdm import tqdm
@@ -48,14 +39,206 @@ from examples.LIBERO.eval_files.model2libero_interface import ModelClient
 
 # from calvin_env.envs.play_table_env import get_env
 
-# Set OpenGL platform for headless rendering
-os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-os.environ["MUJOCO_GL"] = "osmesa"
+_render_backend_env = os.environ.get("STARVLA_CALVIN_RENDER_BACKEND", "auto").strip().lower()
+if _render_backend_env in {"egl", "gpu", "cuda", "fast", "auto"}:
+    os.environ["PYOPENGL_PLATFORM"] = "egl"
+    os.environ["MUJOCO_GL"] = "egl"
+    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "0"
+else:
+    os.environ["PYOPENGL_PLATFORM"] = "osmesa"
+    os.environ["MUJOCO_GL"] = "osmesa"
+    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 EP_LEN = 360  # Max steps per task
+
+
+def collect_plan(model, plans, subtask):
+    try:
+        plans[subtask].append((model.plan.cpu(), model.latent_goal.cpu()))
+    except AttributeError:
+        return
+
+
+def count_success(results):
+    count = Counter(results)
+    step_success = []
+    for i in range(1, 6):
+        n_success = sum(count[j] for j in reversed(range(i, 6)))
+        step_success.append(n_success / len(results))
+    return step_success
+
+
+def print_and_save(results, sequences, log_dir, epoch=None):
+    current_data = {}
+    print(f"Results for Epoch {epoch}:")
+    avg_seq_len = float(np.mean(results))
+    chain_sr = {i + 1: float(sr) for i, sr in enumerate(count_success(results))}
+    print(f"Average successful sequence length: {avg_seq_len}")
+    print("Success rates for i instructions in a row:")
+    for i, sr in chain_sr.items():
+        print(f"{i}: {sr * 100:.1f}%")
+
+    cnt_success = Counter()
+    cnt_fail = Counter()
+
+    for result, (_, sequence) in zip(results, sequences):
+        for successful_tasks in sequence[:result]:
+            cnt_success[successful_tasks] += 1
+        if result < len(sequence):
+            failed_task = sequence[result]
+            cnt_fail[failed_task] += 1
+
+    total = cnt_success + cnt_fail
+    task_info = {}
+    for task in total:
+        task_info[task] = {"success": int(cnt_success[task]), "total": int(total[task])}
+        print(f"{task}: {cnt_success[task]} / {total[task]} |  SR: {cnt_success[task] / total[task] * 100:.1f}%")
+
+    data = {"avg_seq_len": avg_seq_len, "chain_sr": chain_sr, "task_info": task_info}
+    current_data[epoch] = data
+
+    print()
+    previous_data = {}
+    try:
+        with open(log_dir / "results.json", "r") as file:
+            previous_data = json.load(file)
+    except FileNotFoundError:
+        pass
+    json_data = {**previous_data, **current_data}
+    with open(log_dir / "results.json", "w") as file:
+        json.dump(json_data, file)
+    print(
+        f"Best model: epoch {max(json_data, key=lambda x: json_data[x]['avg_seq_len'])} "
+        f"with average sequences length of {max(map(lambda x: x['avg_seq_len'], json_data.values()))}"
+    )
+
+
+def get_log_dir(log_dir):
+    if log_dir is not None:
+        log_dir = Path(log_dir)
+        os.makedirs(log_dir, exist_ok=True)
+    else:
+        log_dir = Path(__file__).parents[3] / "evaluation"
+        if not log_dir.exists():
+            log_dir = Path("/tmp/evaluation")
+            os.makedirs(log_dir, exist_ok=True)
+    print(f"logging to {log_dir}")
+    return log_dir
+
+
+@contextlib.contextmanager
+def temp_seed(seed):
+    state = np.random.get_state()
+    np.random.seed(seed)
+    try:
+        yield
+    finally:
+        np.random.set_state(state)
+
+
+def fnv1a_32(text):
+    value = 2166136261
+    for byte in str(text).encode("utf-8"):
+        value ^= byte
+        value = (value * 16777619) & 0xFFFFFFFF
+    return value
+
+
+def get_env_state_for_initial_condition(initial_condition):
+    robot_obs = np.array(
+        [
+            0.02586889,
+            -0.2313129,
+            0.5712808,
+            3.09045411,
+            -0.02908596,
+            1.50013585,
+            0.07999963,
+            -1.21779124,
+            1.03987629,
+            2.11978254,
+            -2.34205014,
+            -0.87015899,
+            1.64119093,
+            0.55344928,
+            1.0,
+        ]
+    )
+    block_rot_z_range = (pi / 2 - pi / 8, pi / 2 + pi / 8)
+    block_slider_left = np.array([-2.40851662e-01, 9.24044687e-02, 4.60990009e-01])
+    block_slider_right = np.array([7.03416330e-02, 9.24044687e-02, 4.60990009e-01])
+    block_table = [
+        np.array([5.00000896e-02, -1.20000177e-01, 4.59990009e-01]),
+        np.array([2.29995412e-01, -1.19995140e-01, 4.59990010e-01]),
+    ]
+
+    seed = fnv1a_32(str(initial_condition.values()))
+    with temp_seed(seed):
+        np.random.shuffle(block_table)
+
+        scene_obs = np.zeros(24)
+        if initial_condition["slider"] == "left":
+            scene_obs[0] = 0.28
+        if initial_condition["drawer"] == "open":
+            scene_obs[1] = 0.22
+        if initial_condition["lightbulb"] == 1:
+            scene_obs[3] = 0.088
+        scene_obs[4] = initial_condition["lightbulb"]
+        scene_obs[5] = initial_condition["led"]
+
+        if initial_condition["red_block"] == "slider_right":
+            scene_obs[6:9] = block_slider_right
+        elif initial_condition["red_block"] == "slider_left":
+            scene_obs[6:9] = block_slider_left
+        else:
+            scene_obs[6:9] = block_table[0]
+        scene_obs[11] = np.random.uniform(*block_rot_z_range)
+
+        if initial_condition["blue_block"] == "slider_right":
+            scene_obs[12:15] = block_slider_right
+        elif initial_condition["blue_block"] == "slider_left":
+            scene_obs[12:15] = block_slider_left
+        elif initial_condition["red_block"] == "table":
+            scene_obs[12:15] = block_table[1]
+        else:
+            scene_obs[12:15] = block_table[0]
+        scene_obs[17] = np.random.uniform(*block_rot_z_range)
+
+        if initial_condition["pink_block"] == "slider_right":
+            scene_obs[18:21] = block_slider_right
+        elif initial_condition["pink_block"] == "slider_left":
+            scene_obs[18:21] = block_slider_left
+        else:
+            scene_obs[18:21] = block_table[1]
+        scene_obs[23] = np.random.uniform(*block_rot_z_range)
+
+    return robot_obs, scene_obs
+
+
+def make_image_sequence_clip(frames, fps):
+    from moviepy.editor import ImageSequenceClip
+
+    return ImageSequenceClip(frames, fps=fps)
+
+
+def make_close_idempotent(env):
+    original_close = env.close
+    closed = False
+
+    def close_once():
+        nonlocal closed
+        if closed:
+            return
+        closed = True
+        try:
+            original_close()
+        except Exception as exc:
+            logger.debug("Ignoring Calvin env close error after shutdown: %r", exc)
+
+    env.close = close_once
+    return env
 
 
 @dataclasses.dataclass
@@ -77,6 +260,9 @@ class Args:
     calvin_config_path: str = "/path/to/calvin/calvin_models/conf"
     eval_sequences_path: str = "/path/to/calvin/eval_sequences.json"
     num_sequences: int = 1000  # Number of evaluation sequences
+    max_steps_per_task: int = EP_LEN  # Official CALVIN uses 360; lower this only for quick smoke checks.
+    sequence_start: int = 0  # Shard start index for parallel CALVIN evaluation.
+    sequence_stride: int = 1  # Shard stride; use one worker per stride slot.
     num_workers: int = 1  # For future multi-process support
     seed: int = 0
     create_plan_tsne: bool = False
@@ -103,19 +289,22 @@ class CalvinPolicyClient:
         unnorm_key: str = "",
     ):
         self.client = ModelClient(
-            policy_ckpt_path=pretrained_path,
+            unnorm_key=(unnorm_key or None),
+            policy_setup="franka",
+            horizon=0,
+            action_ensemble=False,
             host=host,
             port=port,
-            image_size=[resize_size, resize_size],
-            unnorm_key=(unnorm_key or None),
         )
         self.resize_size = resize_size
         self.replan_steps = replan_steps
+        self.pretrained_path = pretrained_path
         self.step_count = 0
 
     def reset(self):
         """Reset action plan buffer."""
         self.step_count = 0
+        self.client.reset(None)
 
     def step(self, obs: dict, lang_annotation: str) -> np.ndarray:
         """
@@ -159,26 +348,73 @@ class CalvinPolicyClient:
         return action
 
 
+def _normalize_render_backend(value: str) -> str:
+    backend = (value or "auto").strip().lower()
+    if backend in {"egl", "gpu", "cuda", "fast", "auto"}:
+        return "egl"
+    if backend in {"direct", "osmesa", "safe", "cpu"}:
+        return "direct"
+    logger.warning("Unknown STARVLA_CALVIN_RENDER_BACKEND=%r; using direct/osmesa", value)
+    return "direct"
+
+
+def _configure_egl_device(render_gpu: str | None) -> None:
+    if not render_gpu:
+        return
+    if "EGL_VISIBLE_DEVICES" in os.environ or "EGL_VISIBLE_DEVICE" in os.environ:
+        return
+    try:
+        cuda_id = int(str(render_gpu).split(",")[0])
+    except ValueError:
+        logger.warning("Ignoring invalid STARVLA_CALVIN_RENDER_GPU=%r", render_gpu)
+        return
+    try:
+        from calvin_env.utils.utils import get_egl_device_id
+
+        egl_id = get_egl_device_id(cuda_id)
+    except Exception as exc:
+        logger.warning("Could not map CUDA GPU %s to an EGL device: %r; trying the CUDA id directly", cuda_id, exc)
+        egl_id = cuda_id
+    os.environ["EGL_VISIBLE_DEVICES"] = str(egl_id)
+    os.environ["EGL_VISIBLE_DEVICE"] = str(egl_id)
+    logger.info("CALVIN EGL render device %s selected for CUDA GPU %s", egl_id, cuda_id)
+
+
 def make_env(dataset_path: str):
     """Initialize Calvin environment without tactile sensor (to avoid OpenGL issues)."""
-    val_folder = Path(dataset_path) / "validation"
+    dataset_root = Path(dataset_path)
+    val_folder = dataset_root if (dataset_root / ".hydra" / "merged_config.yaml").exists() else dataset_root / "validation"
 
     # Load config and disable tactile sensor to avoid pyrender/OpenGL conflicts
     from omegaconf import OmegaConf
 
     config_path = val_folder / ".hydra" / "merged_config.yaml"
     cfg = OmegaConf.load(config_path)
+    render_backend = _normalize_render_backend(os.environ.get("STARVLA_CALVIN_RENDER_BACKEND", "auto"))
+    use_egl = render_backend == "egl"
+    if use_egl:
+        _configure_egl_device(os.environ.get("STARVLA_CALVIN_RENDER_GPU"))
+    cfg.env.use_egl = bool(use_egl)
+    logger.info(
+        "Calvin render backend=%s use_egl=%s render_gpu=%s config=%s",
+        render_backend,
+        cfg.env.use_egl,
+        os.environ.get("STARVLA_CALVIN_RENDER_GPU", "auto"),
+        config_path,
+    )
 
-    # Remove tactile sensor from camera list if it exists
-    if hasattr(cfg.env, "cameras") and "tactile" in cfg.env.cameras:
-        # Create a new camera dict without tactile
-        new_cameras = OmegaConf.create({k: v for k, v in cfg.env.cameras.items() if k != "tactile"})
-        cfg.env.cameras = new_cameras
+    # The StarVLA policy consumes only static and gripper RGB. Avoid tactile or extra cameras.
+    if hasattr(cfg.env, "cameras"):
+        wanted_cameras = {"static", "gripper"}
+        new_cameras = OmegaConf.create({k: v for k, v in cfg.env.cameras.items() if k in wanted_cameras})
+        if new_cameras:
+            cfg.env.cameras = new_cameras
 
     # Initialize environment with modified config
     import hydra
 
-    env = hydra.utils.instantiate(cfg.env, show_gui=False, use_vr=False, use_scene_info=True)
+    env = hydra.utils.instantiate(cfg.env, show_gui=False, use_vr=False, use_scene_info=True, use_egl=bool(use_egl))
+    make_close_idempotent(env)
 
     return env
 
@@ -199,6 +435,9 @@ def evaluate_policy_ddp(
     calvin_conf_path,
     eval_sequences_path,
     num_sequences,
+    max_steps_per_task=EP_LEN,
+    sequence_start=0,
+    sequence_stride=1,
     eval_log_dir=None,
     debug=False,
     create_plan_tsne=False,
@@ -232,7 +471,29 @@ def evaluate_policy_ddp(
 
     eval_log_dir = get_log_dir(eval_log_dir)
     with open(eval_sequences_path, "r") as f:
-        eval_sequences = json.load(f)
+        all_eval_sequences = json.load(f)
+    if num_sequences is None or num_sequences <= 0:
+        selected_eval_sequences = all_eval_sequences
+    else:
+        selected_eval_sequences = all_eval_sequences[: min(num_sequences, len(all_eval_sequences))]
+    sequence_start = max(int(sequence_start or 0), 0)
+    sequence_stride = max(int(sequence_stride or 1), 1)
+    indexed_eval_sequences = list(enumerate(selected_eval_sequences))
+    eval_items = indexed_eval_sequences[sequence_start::sequence_stride]
+    logger.info(
+        "Evaluating %d/%d selected CALVIN sequences from %d official sequences, shard=%d/%d, max_steps_per_task=%d",
+        len(eval_items),
+        len(selected_eval_sequences),
+        len(all_eval_sequences),
+        sequence_start,
+        sequence_stride,
+        max_steps_per_task,
+    )
+    if not eval_items:
+        logger.warning("No CALVIN sequences assigned to shard start=%d stride=%d", sequence_start, sequence_stride)
+        with open(eval_log_dir / "sequence_results.json", "w") as f:
+            json.dump([], f)
+        return []
     # device_num = int(torch.distributed.get_world_size())
     # device_id = torch.distributed.get_rank()
     # assert num_sequences % device_num == 0
@@ -240,13 +501,13 @@ def evaluate_policy_ddp(
     # eval_sequences = eval_sequences[device_id*interval_len:min((device_id+1)*interval_len, num_sequences)]
     results = []
     plans = defaultdict(list)
-    local_sequence_i = 0
-    base_sequence_i = 0  # device_id * interval_len
 
     if not debug:
-        eval_sequences = tqdm(eval_sequences, position=0, leave=True)
+        progress_iter = tqdm(eval_items, position=0, leave=True)
+    else:
+        progress_iter = eval_items
 
-    for initial_state, eval_sequence in eval_sequences:
+    for original_sequence_i, (initial_state, eval_sequence) in progress_iter:
         result = evaluate_sequence(
             env,
             policy,
@@ -257,16 +518,16 @@ def evaluate_policy_ddp(
             plans,
             debug,
             eval_log_dir,
-            base_sequence_i + local_sequence_i,
+            original_sequence_i,
             reset=reset,
             diverse_inst=diverse_inst,
+            max_steps_per_task=max_steps_per_task,
         )
         results.append(result)
         if not debug:
-            eval_sequences.set_description(
+            progress_iter.set_description(
                 " ".join([f"{i + 1}/5 : {v * 100:.1f}% |" for i, v in enumerate(count_success(results))]) + "|"
             )
-        local_sequence_i += 1
 
     def merge_multi_list(res):
         tmp = []
@@ -280,9 +541,19 @@ def evaluate_policy_ddp(
     # if create_plan_tsne:
     #     create_tsne(plans, eval_log_dir, epoch)
 
-    eval_sequences = extract_iter_from_tqdm(eval_sequences)
-
-    print_and_save(results, eval_sequences, eval_log_dir, epoch)
+    print_and_save(results, [item for _, item in eval_items], eval_log_dir, epoch)
+    raw_results = []
+    for (sequence_index, (initial_state, sequence)), result in zip(eval_items, results):
+        raw_results.append(
+            {
+                "sequence_index": int(sequence_index),
+                "initial_state": initial_state,
+                "sequence": sequence,
+                "success_count": int(result),
+            }
+        )
+    with open(eval_log_dir / "sequence_results.json", "w") as f:
+        json.dump(raw_results, f, indent=2, sort_keys=True)
 
     return results
 
@@ -300,6 +571,7 @@ def evaluate_sequence(
     sequence_i=-1,
     reset=False,
     diverse_inst=False,
+    max_steps_per_task=EP_LEN,
 ):
     """
     Evaluates a sequence of language instructions.
@@ -330,6 +602,7 @@ def evaluate_sequence(
                 robot_obs=robot_obs,
                 scene_obs=scene_obs,
                 diverse_inst=diverse_inst,
+                max_steps_per_task=max_steps_per_task,
             )
         else:
             success = rollout(
@@ -344,6 +617,7 @@ def evaluate_sequence(
                 subtask_i,
                 sequence_i,
                 diverse_inst=diverse_inst,
+                max_steps_per_task=max_steps_per_task,
             )
         if success:
             success_counter += 1
@@ -366,6 +640,7 @@ def rollout(
     robot_obs=None,
     scene_obs=None,
     diverse_inst=False,
+    max_steps_per_task=EP_LEN,
 ):
     """
     Run the actual rollout on one subtask (which is one natural language instruction).
@@ -390,7 +665,7 @@ def rollout(
     if debug:
         img_queue = []
 
-    for step in range(EP_LEN):
+    for step in range(max_steps_per_task):
 
         action = policy.step(obs, lang_annotation)
 
@@ -412,12 +687,12 @@ def rollout(
         if len(current_task_info) > 0:
             if debug:
                 print(colored("success", "green"), end=" ")
-                img_clip = ImageSequenceClip(img_queue, fps=30)
+                img_clip = make_image_sequence_clip(img_queue, fps=30)
                 img_clip.write_gif(os.path.join(eval_log_dir, f"{sequence_i}-{subtask_i}-{subtask}-succ.gif"), fps=30)
             return True
     if debug:
         print(colored("fail", "red"), end=" ")
-        img_clip = ImageSequenceClip(img_queue, fps=30)
+        img_clip = make_image_sequence_clip(img_queue, fps=30)
         img_clip.write_gif(os.path.join(eval_log_dir, f"{sequence_i}-{subtask_i}-{subtask}-fail.gif"), fps=30)
     return False
 
@@ -442,6 +717,9 @@ def main(args: Args):
         args.calvin_config_path,
         args.eval_sequences_path,
         args.num_sequences,
+        args.max_steps_per_task,
+        args.sequence_start,
+        args.sequence_stride,
         args.eval_log_dir,
         args.debug,
         args.create_plan_tsne,
