@@ -1,31 +1,19 @@
-# StarVLA CALVIN ABC→D 评测与结果分析报告
+# CALVIN ABC→D 测评报告
 
-本文面向 StarVLA 在 CALVIN ABC→D 长程任务上的测评结果、指标解释、结果归因和个人贡献说明。技术路线、训练策略、模型结构与 failure pattern 的完整理论分析见 [TECHNICAL_REPORT.md](TECHNICAL_REPORT.md)；工程运行、交互式训练与评估流程见 [SUMMERCAMP_STARVLA.md](SUMMERCAMP_STARVLA.md)。
+本文只记录 CALVIN ABC→D 测评协议、完整结果表和基于结果的分析。技术路线、失败模式根因和改进方案见 [TECHNICAL_REPORT.md](TECHNICAL_REPORT.md)。
 
-## 1. 报告摘要
+## 1. 测评协议
 
-CALVIN ABC→D 测评用于检验策略从训练环境 ABC 迁移到未见环境 D 的长程泛化能力。每条 evaluation sequence 由最多 5 个 subtasks 组成，结果以 `Task 1` 到 `Task 5` 的连续成功率和 `Average Chain Length` 衡量。该指标不仅反映单步 affordance 和动作精度，也显式暴露任务切换、状态恢复、接触时序和误差累积问题。
+CALVIN ABC→D 的核心检验是：策略只在 ABC 环境或 ABC 相关数据上训练，然后在未见过的 D 环境中完成由 5 个子任务组成的长程指令链。每条 evaluation sequence 最多包含 5 个 subtasks，因此报告包含：
 
-当前可解析结果中，`n=300` 规模下 **WMH MoE95k LoRA Aug latest** 达到 Avg Len `1.863`、Task 5 `12.7%`；`n=1000` 规模下 **WMH state8 connector steps8000 fast w4x8** 达到 Avg Len `1.086`、Task 5 `4.3%`。对比结果表明，MoE、LoRA 后训练和 augmentation 的收益主要体现在 Task 3~5 的长链保持能力，而不是只提升第一步成功率。参数级 checkpoint soup ensemble 表现明显退化，说明异构 MoE/router/action head 直接平均会破坏专家分工和动作模式。
-
-## 2. 测评任务与指标定义
-
-### 2.1 CALVIN ABC→D 协议
-
-CALVIN ABC→D 要求策略只在 ABC 环境或 ABC 相关数据上训练，然后在未见过的 D 环境中执行多步语言指令链。每条 sequence 最多包含 5 个 subtasks，因此测评结果包含：
-
-- `Task 1`：至少完成第 1 个 subtask 的 sequence 比例。
-- `Task 2`：连续完成前 2 个 subtasks 的 sequence 比例。
-- `Task 3`：连续完成前 3 个 subtasks 的 sequence 比例。
-- `Task 4`：连续完成前 4 个 subtasks 的 sequence 比例。
-- `Task 5`：连续完成全部 5 个 subtasks 的 sequence 比例。
+- `Task 1` 成功率：至少完成第 1 个 subtask 的 sequence 比例。
+- `Task 2` 成功率：连续完成前 2 个 subtasks 的 sequence 比例。
+- `Task 3` 成功率：连续完成前 3 个 subtasks 的 sequence 比例。
+- `Task 4` 成功率：连续完成前 4 个 subtasks 的 sequence 比例。
+- `Task 5` 成功率：连续完成全部 5 个 subtasks 的 sequence 比例。
 - `Average Chain Length`：每条 sequence 平均完成的 subtask 数。
 
-该协议的关键不是孤立的单步 success，而是 survival curve：策略必须在完成前一任务后，从新状态继续理解下一条指令并执行正确动作。
-
-### 2.2 数学定义
-
-令第 $i$ 条 sequence 完成长度为 $l_i\in\{0,1,2,3,4,5\}$，总评估条数为 $N$。第 $k$ 个位置的 survival success rate 为：
+令第 $i$ 条 sequence 完成长度为 $l_i\in\{0,1,2,3,4,5\}$，总数为 $N$。第 $k$ 个位置的 survival success rate 为：
 
 $$
 \mathrm{SR}_k
@@ -41,25 +29,20 @@ $$
 =\sum_{k=1}^{5}\mathrm{SR}_k.
 $$
 
-因此 `Average Chain Length` 与 Task 1~5 成功率之间存在一致性约束。报告汇总时使用该关系检查结果是否合理。
+因此 `Average Chain Length` 不只是单独指标，它也等于 Task 1 到 Task 5 五个 survival rate 的和。这个性质用于检查结果是否一致。
 
-## 3. 结果来源与整理方式
+## 2. 结果来源
 
-本报告汇总当前目录中可解析的 CALVIN ABC→D top-level results：
+本报告汇总了当前目录中可解析的 CALVIN ABC→D top-level results：
 
 ```text
 /inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/*/reports/**/results.json
 /inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/runs/**/calvin_eval/merged_results.json
 ```
 
-整理规则如下：
+worker 级 `worker_*/results.json` 只作为聚合输入，不作为独立模型结果列入主表。下表按 `Average Chain Length` 从高到低排序。`n=10` 或 `n=50/100` 的结果只作为快速趋势或 smoke test；正式比较以 `n=300` 或 `n=1000` 为主要依据。
 
-- worker 级 `worker_*/results.json` 只作为聚合输入，不作为独立模型结果列入主表。
-- 主表按 `Average Chain Length` 从高到低排序。
-- `n=10`、`n=50`、`n=100` 结果用于观察快速趋势；`n=300`、`n=1000` 更适合做稳定比较。
-- `Near Miss` 表示接近成功但未通过环境判定的比例，用于判断模型是完全失败还是动作精度、接触时序或终止条件不足。
-
-## 4. CALVIN ABC→D 完整结果
+## 3. CALVIN ABC→D 完整结果表
 
 | Model / Run | n | Avg Len | Task 1 | Task 2 | Task 3 | Task 4 | Task 5 | Near Miss | Related Near Miss |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -88,40 +71,34 @@ $$
 | WMH formal quick failed run | 10 | 0.000 | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 60.0% | 30.0% |
 | WMH formal quick failed run early | 10 | 0.000 | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 30.0% | 10.0% |
 
-## 5. 结果总览
+## 4. 主要结论
 
-### 5.1 样本规模视角
+当前最强的 `n=300` 结果是 **WMH MoE95k LoRA Aug latest**，平均链长 `1.863`，Task 5 为 `12.7%`。它相比 GTY MoE posttrain 95k 的 `1.640 / 9.7%` 更强，主要提升在 Task 3、Task 4、Task 5：
 
-当前结果可以分成三类证据：
+| Model | Task 1 | Task 2 | Task 3 | Task 4 | Task 5 | Avg Len |
+|---|---:|---:|---:|---:|---:|---:|
+| GTY MoE posttrain 95k | 72.7% | 42.0% | 24.0% | 15.7% | 9.7% | 1.640 |
+| WMH MoE95k LoRA Aug latest | 72.0% | 48.0% | 33.3% | 20.3% | 12.7% | 1.863 |
 
-| 证据类型 | 代表结果 | 解释 |
-|---|---|---|
-| 中等规模效果证据 | WMH MoE95k LoRA Aug latest，`n=300`，Avg `1.863`，Task 5 `12.7%` | MoE + LoRA + augmentation 对长链中后段有效 |
-| 大规模稳定性证据 | WMH state8 connector steps8000 fast w4x8，`n=1000`，Avg `1.086`，Task 5 `4.3%` | 样本数更大，更能刻画 ABC→D 的稳定泛化难度 |
-| 小样本趋势证据 | GTY MoE 60k augmented，`n=100`，Avg `1.910`，Task 5 `12.0%` | 结果较强，但样本规模不同，不能与 `n=300/n=1000` 直接排序 |
+这说明增强和 LoRA 后训练没有显著提高第一步感知触发能力，但明显改善了长链中段和末段。换言之，收益主要来自更稳的连续控制和更好的跨任务状态分布覆盖，而不是单步 affordance 的简单提升。
 
-### 5.2 MoE95k LoRA Aug 与 GTY MoE Posttrain 对比
+当前最完整的 `n=1000` 正式规模结果是 **WMH state8 connector steps8000 fast w4x8**，平均链长 `1.086`，Task 5 为 `4.3%`。虽然它不如 `n=300` 的最强 MoE95k 结果，但样本数更大，方差更低，能更真实地反映 ABC→D 的泛化难度。
 
-同为 MoE/后训练相关路线，WMH MoE95k LoRA Aug latest 在 `n=300` 上优于 GTY MoE posttrain 95k：
+`n=100` 的 GTY MoE 60k 结果达到 `1.910`、Task 5 `12.0%`，但样本数较小。由于 CALVIN sequence 分布中任务组合差异较大，`n=100` 结果可能有 2 到 5 个百分点的波动，因此它更适合作为趋势信号，而不是与 `n=300/n=1000` 结果直接排序。
 
-| Model | n | Task 1 | Task 2 | Task 3 | Task 4 | Task 5 | Avg Len |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| GTY MoE posttrain 95k | 300 | 72.7% | 42.0% | 24.0% | 15.7% | 9.7% | 1.640 |
-| WMH MoE95k LoRA Aug latest | 300 | 72.0% | 48.0% | 33.3% | 20.3% | 12.7% | 1.863 |
+参数级 ensemble 没有带来提升。local weighted checkpoint soup ensemble 在 `n=1000` 上只有 `0.302` 平均链长，Task 5 为 `0.0%`。这说明当前候选模型不是同一 loss basin 的同构 checkpoint，直接平均 MoE/router/action head 权重会破坏专家分工和动作 mode。
 
-两者 Task 1 基本接近，但 WMH MoE95k LoRA Aug 在 Task 2~5 上更稳，说明该提升主要来自后续状态分布覆盖、任务切换稳定性和长链恢复能力，而不是单步视觉触发能力。
+## 5. 指标形态分析
 
-## 6. 指标形态与现象分析
+### 5.1 长链衰减
 
-### 6.1 长链衰减
-
-以 WMH MoE95k LoRA Aug latest `n=300` 为例，survival curve 为：
+CALVIN ABC→D 的核心困难不是只完成 Task 1，而是 survival curve 是否缓慢衰减。以 WMH MoE95k LoRA Aug latest `n=300` 为例：
 
 $$
 72.0\% \rightarrow 48.0\% \rightarrow 33.3\% \rightarrow 20.3\% \rightarrow 12.7\%.
 $$
 
-相邻条件成功率为：
+相邻条件成功率可粗略估计为：
 
 $$
 P(T_2\mid T_1)=\frac{48.0}{72.0}=66.7\%,
@@ -135,20 +112,23 @@ P(T_4\mid T_3)=\frac{20.3}{33.3}=61.0\%,
 P(T_5\mid T_4)=\frac{12.7}{20.3}=62.3\%.
 $$
 
-这说明失败不是只发生在第一步。即使前一步成功，下一步仍有约 30% 到 40% 的条件失败率。长链评估暴露的是状态恢复、receding horizon 稳定性、任务切换和 gripper/contact 时序的联合瓶颈。
+这条曲线说明失败不是只发生在第一步；即使前一步成功，下一步仍有 30% 到 40% 的条件失败率。改进重点应放在跨 subtask 的状态恢复、receding horizon 稳定性、任务切换和 gripper/contact 时序。
 
-### 6.2 Augmentation 与后训练收益
+### 5.2 增强与后训练收益
 
-`WMH base8k` 到 `WMH augmented hard v2` 的提升明显：
+`WMH base8k` 到 `WMH augmented hard v2` 的提升很明显：
 
 | Model | n | Avg Len | Task 5 |
 |---|---:|---:|---:|
 | WMH base8k | 300 | 1.050 | 3.7% |
 | WMH augmented hard v2 | 300 | 1.847 | 12.0% |
 
-Average Chain Length 提升 $0.797$，Task 5 提升 $8.3$ 个百分点。该结果说明 ABC→D 的主要瓶颈不是基础技能完全缺失，而是环境泛化、hard state 覆盖和长链中后段的分布偏移。
+Average Chain Length 提升 $0.797$，Task 5 提升 $8.3$ 个百分点。这个结果支持两个判断：
 
-### 6.3 Mirror Augmentation 的边界
+- ABC→D 的主要瓶颈是环境泛化和状态分布偏移，不是模型完全没有基本技能。
+- hard augmentation 或 failure-like 数据重采样对长链后半段更有效，因为后半段状态更偏离 demonstrations 的初始分布。
+
+### 5.3 MoE95k LoRA Aug 与 Mirror 的差异
 
 同样是 MoE95k LoRA 后训练，Aug 优于 Mirror：
 
@@ -157,80 +137,27 @@ Average Chain Length 提升 $0.797$，Task 5 提升 $8.3$ 个百分点。该结�
 | Aug | 300 | 1.863 | 12.7% |
 | Mirror | 300 | 1.670 | 7.7% |
 
-Mirror 可以增强左右或空间对称性，但若 D 环境的失败更多来自物体状态、接触阶段和任务切换，而不只是左右视角变化，则 mirror augmentation 对长链帮助有限。Aug 的更高 Task 3/4/5 表明其覆盖了更多动作扰动、视觉扰动或 hard state。
+Mirror 可以增加左右/空间对称性，但如果 CALVIN D 环境的失败更多来自物体状态、接触阶段和任务切换，而不只是左右视角变化，则 mirror augmentation 对长链帮助有限。Aug 的高 Task 3/4/5 表明它更好覆盖了动作扰动、视觉扰动或 hard state。
 
-### 6.4 Near Miss 的含义
+### 5.4 Near Miss 解释
 
-MoE95k LoRA Aug `n=300` 的 near miss 为 `22.5%`，比 augmented hard v2 的 `11.4%` 高。这个现象有两层含义：
+Near Miss 高说明模型经常接近成功状态但未通过环境判定。MoE95k LoRA Aug `n=300` 的 near miss 为 `22.5%`，比 augmented hard v2 的 `11.4%` 高。这可以有两种解释：
 
-- 正向含义：模型已经学到目标区域和大致动作，只差末端精度或 gripper/contact 时序。
-- 负向含义：模型可能在某些任务上反复接近但不完成，说明控制器、动作边界或 action head 精度仍不足。
+- 正向解释：模型已学到目标区域和大致动作，只差末端精度或 gripper/contact 时序。
+- 负向解释：模型在某些任务上产生重复接近但不完成的轨迹，说明控制器或 action head 精度不足。
 
-因此 near miss 不是单纯的失败率补充项，而是判断后训练方向的重要信号。near miss 高时，precision-oriented post-training、separate gripper/contact head、action-bound layer、uncertainty/value-assisted selection 比继续单纯增加视觉增强更有针对性。
+因此 near miss 高的模型适合做 precision-oriented post-training，例如 `T20` failure replay、`T24` advantage-weighted BC、`S27` safety/action-bound、`S28` uncertainty/value-assisted selection，而不是只增加视觉增强。
 
-### 6.5 Ensemble 结果边界
+## 6. 结果边界与实验缺口
 
-local weighted checkpoint soup ensemble 在 `n=1000` 上 Avg Len 仅为 `0.302`，Task 5 为 `0.0%`。该结果说明，当前参与 ensemble 的模型不满足同构 checkpoint averaging 的基本前提：结构、初始化、训练阶段和 loss basin 都不完全一致。对 MoE/router/action head 直接做参数平均，会破坏专家分工和动作 mode。
+当前结果可以分成三类证据：
 
-这并不否定 action-level ensemble。更合理的形式是：
+- **中等规模效果证据**：WMH MoE95k LoRA Aug latest 在 `n=300` 上达到 Avg `1.863`、Task 5 `12.7%`，说明 MoE + LoRA + augmentation 对长链中后段有效。
+- **大规模稳定性证据**：WMH state8 connector steps8000 fast w4x8 在 `n=1000` 上达到 Avg `1.086`、Task 5 `4.3%`，样本数更大，能更稳定地刻画 ABC→D 泛化难度。
+- **小样本趋势证据**：GTY MoE 60k augmented 在 `n=100` 上达到 Avg `1.910`、Task 5 `12.0%`，说明该路线值得纳入对比，但该结果尚不具备与 `n=300/n=1000` 结果同等的统计稳定性。
 
-$$
-\pi_{\mathrm{ens}}(a\mid x)
-=\sum_m w_m(x)\pi_m(a\mid x),
-$$
+尚未闭合的实验缺口包括：
 
-$$
-w_m(x)
-=\mathrm{softmax}\left(\frac{\mathrm{score}_m(x)}{\tau}\right).
-$$
-
-其中 $\mathrm{score}_m(x)$ 可以由 validation success、uncertainty、value head 或 task/domain router 给出。参数级 soup 与 action-level router 应作为不同实验范式分别评估。
-
-## 7. 结果边界与实验缺口
-
-本轮测评已经给出若干清晰趋势，但仍存在未闭合的实验边界：
-
-- GTY MoE 60k augmented 只有 `n=100` 规模结果，缺少 `n=300/n=1000` 同规模验证。
-- WMH MoE95k LoRA Aug latest 目前最强证据来自 `n=300`，缺少 `n=1000` 长评估。
-- 参数级 ensemble 已显示退化，但同构 checkpoint averaging 与 action-level ensemble 尚未充分分离验证。
-- Near miss 指标提示动作精度和 gripper/contact 时序仍是瓶颈，需要结合 failure replay、action-bound layer 和 contact-specific head 进一步分析。
-- 世界模型路线已有短程 affordance 信号，但长链闭环控制能力尚未在 CALVIN ABC→D 上形成稳定优势。
-
-## 8. 个人贡献
-
-本报告中的个人贡献主要体现在工程实现、测评组织、结果整理、问题定位和分析归纳五个方面。
-
-### 8.1 测评体系搭建与修复
-
-- 贯通了交互式 CALVIN evaluation 流程，使 checkpoint 能通过 `interaction` 层启动 policy server、client rollout、日志记录和结果聚合。
-- 修复和完善了 CALVIN evaluation 中与 `unnorm_key`、state/action 维度、checkpoint metadata、FAST token decode、policy server/client 并发和端口管理相关的问题，使评估失败可以更早定位。
-- 将 worker 级结果与 top-level 聚合结果区分处理，避免把 `worker_*/results.json` 当成独立模型结果，减少统计口径混乱。
-- 将 `n=10/50/100/300/1000` 等不同规模评估统一纳入同一结果表，并明确其统计含义差异。
-
-### 8.2 指标定义与一致性检查
-
-- 明确 CALVIN ABC→D 的 Task 1~5 是 survival success rate，而不是五个互相独立的分类指标。
-- 写清楚 $\mathrm{AvgLen}=\sum_{k=1}^{5}\mathrm{SR}_k$ 的数学关系，用于解释平均链长与 Task 1~5 的一致性。
-- 引入相邻条件成功率 $P(T_k\mid T_{k-1})$ 分析长链衰减，使结果解释从“哪个模型分数更高”转向“失败发生在链条哪个阶段”。
-- 将 Near Miss 纳入结果分析，用于区分完全失败、接近成功但精度不足、以及重复接近但未完成三类现象。
-
-### 8.3 结果汇总与模型对比
-
-- 系统整理了公共成员目录和本地 run 目录中的 CALVIN ABC→D 结果，形成统一完整结果表。
-- 对 MoE95k LoRA Aug、GTY MoE posttrain、adaptive MoE、state8 connector、base8k、world-model 相关结果和 ensemble 结果做了同表对比。
-- 将不同样本规模结果拆分为中等规模效果证据、大规模稳定性证据和小样本趋势证据，避免不同 `n` 的结果被直接误排序。
-- 分析了 augmentation、mirror augmentation、posttrain、MoE 和参数级 ensemble 对 Task 1~5 的不同影响。
-
-### 8.4 Failure Pattern 与后训练方向分析
-
-- 从测评结果中归纳出长链衰减、环境泛化、动作精度不足、gripper/contact 时序、任务切换退化和多峰动作平均等典型 failure pattern。
-- 将 near miss 高的问题关联到 precision-oriented post-training、separate gripper/contact head、action-bound layer、uncertainty/value-assisted selection 等可执行改进方向。
-- 将参数级 soup 的失败解释为异构 checkpoint、MoE/router 和 action head 不在同一 loss basin 下的结构性冲突，并进一步区分了同构 checkpoint averaging 与 action-level ensemble。
-- 将 CALVIN failure sequences 与 `T20/T24/T27` 等 hard-task replay、advantage-weighted BC、DPO-style trajectory ranking 连接起来，为后训练闭环提供依据。
-
-### 8.5 文档化与复现支持
-
-- 将测评协议、指标定义、结果来源、完整结果表、指标形态分析、结果边界和个人贡献整合成独立报告。
-- 使用 $...$ 和 $$...$$ 统一数学表达，使指标定义、条件成功率和 ensemble 公式更清晰。
-- 将本报告与技术报告、工程使用文档、policy matrix 分离，避免评测结果、技术路线和操作指南混在同一个文件中。
-- 保留完整结果表和路径来源，使后续复查、补充评估或复现实验有明确入口。
+- GTY MoE 60k augmented 缺少 `n=300/n=1000` 同规模验证。
+- WMH MoE95k LoRA Aug latest 缺少 `n=1000` 长评估。
+- 当前参数级 ensemble 结果显示异构 soup 会破坏动作专家结构，ensemble 结论需要与同构 checkpoint averaging 或 action-level ensemble 区分讨论。
