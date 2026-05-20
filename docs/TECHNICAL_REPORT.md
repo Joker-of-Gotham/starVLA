@@ -74,7 +74,7 @@ p(a_{t:t+H}\mid o_t,l,s_t)
 \,p_W(z_{\mathrm{future}}\mid o_t,l)\,dz_{\mathrm{future}}.
 $$
 
-但在本次时间预算下，世界模型骨干训练和推理成本较高，action expert 还需要更长后训练才能把 future latent 转成稳定控制。因此最终竞争模型优先采用 Qwen/MoE VLA 路线，世界模型保留为探索性分支。
+但在本次时间预算下，世界模型骨干训练和推理成本较高，action expert 还需要更长后训练才能把 future latent 转成稳定控制。因此本次主要有效结果集中在 Qwen/MoE VLA 路线，世界模型保留为探索性分支。
 
 ### 2.3 Action Expert 路线
 
@@ -318,11 +318,13 @@ $$
 - 修复 CALVIN eval 的 normalization key、state dimension、FAST token decode、server/client 并发、GPU 残留和 checkpoint 损坏定位问题。
 - 将 ensemble 变成标准 run 输出，可直接评估或继续后训练，同时通过结果证明异构参数 soup 的风险。
 
-## 8. 后续改进优先级
+## 8. 未闭合技术问题
 
-1. 补强最优候选的 `n=1000` 评估，尤其是 GTY MoE 60k 和 WMH MoE95k LoRA Aug。
-2. 做同构 checkpoint averaging，而不是异构 MoE/router soup。
-3. 做 action-level ensemble，用 value/uncertainty/task router 决策。
-4. 用 `T20/T24/T27` 将 CALVIN failure sequences 转为 hard-task replay、advantage-weighted BC 和 preference ranking。
-5. 对 near miss 高的模型加入 gripper/contact head、action-bound layer 和精度型后训练。
-6. 将 Cosmos/world branch 作为 future latent regularizer，而不是直接替代低延迟 action backbone。
+当前实验还留下几类需要继续验证的技术问题：
+
+1. **评估方差问题**：GTY MoE 60k 和 WMH MoE95k LoRA Aug 的样本规模不完全一致，`n=100`、`n=300`、`n=1000` 之间不能简单横向排序。
+2. **checkpoint averaging 边界**：异构 MoE/router soup 已经表现出明显退化，同构 checkpoint averaging 与异构参数平均需要分开评估。
+3. **action-level ensemble**：当前结果只证明参数 soup 风险，并未否定以 value、uncertainty 或 task router 为权重的 action-level ensemble。
+4. **failure-to-training 闭环**：CALVIN failure sequences 还可以转成 `T20/T24/T27` 的 hard-task replay、advantage-weighted BC 和 preference ranking。
+5. **near miss 精度问题**：near miss 高的模型需要用 gripper/contact head、action-bound layer 和精度型后训练验证是否能转化为真实 success。
+6. **world branch 作用边界**：Cosmos/world branch 更适合作为 future latent regularizer 还是直接 action backbone，需要在同等训练预算下继续对比。

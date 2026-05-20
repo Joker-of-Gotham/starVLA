@@ -40,7 +40,7 @@ $$
 /inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/runs/**/calvin_eval/merged_results.json
 ```
 
-worker 级 `worker_*/results.json` 只作为聚合输入，不作为独立模型结果列入主表。下表按 `Average Chain Length` 从高到低排序。`n=10` 或 `n=50/100` 的结果只能作为快速趋势或 smoke test，正式比较优先看 `n=300` 或 `n=1000`。
+worker 级 `worker_*/results.json` 只作为聚合输入，不作为独立模型结果列入主表。下表按 `Average Chain Length` 从高到低排序。`n=10` 或 `n=50/100` 的结果只作为快速趋势或 smoke test；正式比较以 `n=300` 或 `n=1000` 为主要依据。
 
 ## 3. CALVIN ABC→D 完整结果表
 
@@ -84,7 +84,7 @@ worker 级 `worker_*/results.json` 只作为聚合输入，不作为独立模型
 
 当前最完整的 `n=1000` 正式规模结果是 **WMH state8 connector steps8000 fast w4x8**，平均链长 `1.086`，Task 5 为 `4.3%`。虽然它不如 `n=300` 的最强 MoE95k 结果，但样本数更大，方差更低，能更真实地反映 ABC→D 的泛化难度。
 
-`n=100` 的 GTY MoE 60k 结果达到 `1.910`、Task 5 `12.0%`，属于强候选，但样本数较小。由于 CALVIN sequence 分布中任务组合差异较大，`n=100` 结果可能有 2 到 5 个百分点的波动，最终排序应以 `n=300/n=1000` 为主。
+`n=100` 的 GTY MoE 60k 结果达到 `1.910`、Task 5 `12.0%`，但样本数较小。由于 CALVIN sequence 分布中任务组合差异较大，`n=100` 结果可能有 2 到 5 个百分点的波动，因此它更适合作为趋势信号，而不是与 `n=300/n=1000` 结果直接排序。
 
 参数级 ensemble 没有带来提升。local weighted checkpoint soup ensemble 在 `n=1000` 上只有 `0.302` 平均链长，Task 5 为 `0.0%`。这说明当前候选模型不是同一 loss basin 的同构 checkpoint，直接平均 MoE/router/action head 权重会破坏专家分工和动作 mode。
 
@@ -148,17 +148,16 @@ Near Miss 高说明模型经常接近成功状态但未通过环境判定。MoE9
 
 因此 near miss 高的模型适合做 precision-oriented post-training，例如 `T20` failure replay、`T24` advantage-weighted BC、`S27` safety/action-bound、`S28` uncertainty/value-assisted selection，而不是只增加视觉增强。
 
-## 6. 推荐提交与后续评估
+## 6. 结果边界与实验缺口
 
-如果只能提交一个已评估模型，建议优先考虑：
+当前结果可以分成三类证据：
 
-1. **WMH MoE95k LoRA Aug latest**：`n=300` 最强，Avg `1.863`，Task 5 `12.7%`。
-2. **GTY MoE 60k augmented**：`n=100` 强候选，Avg `1.910`，Task 5 `12.0%`，但需要补 `n=300/n=1000`。
-3. **WMH state8 connector steps8000 fast w4x8**：`n=1000` 最完整，Avg `1.086`，Task 5 `4.3%`，稳定性参考价值高。
+- **中等规模效果证据**：WMH MoE95k LoRA Aug latest 在 `n=300` 上达到 Avg `1.863`、Task 5 `12.7%`，说明 MoE + LoRA + augmentation 对长链中后段有效。
+- **大规模稳定性证据**：WMH state8 connector steps8000 fast w4x8 在 `n=1000` 上达到 Avg `1.086`、Task 5 `4.3%`，样本数更大，能更稳定地刻画 ABC→D 泛化难度。
+- **小样本趋势证据**：GTY MoE 60k augmented 在 `n=100` 上达到 Avg `1.910`、Task 5 `12.0%`，说明该路线值得纳入对比，但该结果尚不具备与 `n=300/n=1000` 结果同等的统计稳定性。
 
-后续如果还有评估时间，应优先补：
+尚未闭合的实验缺口包括：
 
-- GTY MoE 60k 的 `n=300/n=1000`。
-- WMH MoE95k LoRA Aug latest 的 `n=1000`。
-- 同构 checkpoint averaging，仅在同一架构、同一 run 或相邻 step 间做。
-- action-level ensemble，而不是异构参数 soup。
+- GTY MoE 60k augmented 缺少 `n=300/n=1000` 同规模验证。
+- WMH MoE95k LoRA Aug latest 缺少 `n=1000` 长评估。
+- 当前参数级 ensemble 结果显示异构 soup 会破坏动作专家结构，ensemble 结论需要与同构 checkpoint averaging 或 action-level ensemble 区分讨论。
