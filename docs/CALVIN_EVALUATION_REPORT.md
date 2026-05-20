@@ -13,12 +13,21 @@ CALVIN ABC→D 的核心检验是：策略只在 ABC 环境或 ABC 相关数据�
 - `Task 5` 成功率：连续完成全部 5 个 subtasks 的 sequence 比例。
 - `Average Chain Length`：每条 sequence 平均完成的 subtask 数。
 
-令第 `i` 条 sequence 完成长度为 `l_i ∈ {0,1,2,3,4,5}`，总数为 `N`，则：
+令第 $i$ 条 sequence 完成长度为 $l_i\in\{0,1,2,3,4,5\}$，总数为 $N$。第 $k$ 个位置的 survival success rate 为：
 
-```text
-SR_k = (1/N) * Σ_i 1[l_i >= k], k=1..5
-AvgLen = (1/N) * Σ_i l_i = Σ_{k=1..5} SR_k
-```
+$$
+\mathrm{SR}_k
+=\frac{1}{N}\sum_{i=1}^{N}\mathbb 1[l_i\ge k],
+\qquad k=1,\ldots,5.
+$$
+
+平均链长为：
+
+$$
+\mathrm{AvgLen}
+=\frac{1}{N}\sum_{i=1}^{N}l_i
+=\sum_{k=1}^{5}\mathrm{SR}_k.
+$$
 
 因此 `Average Chain Length` 不只是单独指标，它也等于 Task 1 到 Task 5 五个 survival rate 的和。这个性质用于检查结果是否一致。
 
@@ -66,10 +75,10 @@ worker 级 `worker_*/results.json` 只作为聚合输入，不作为独立模型
 
 当前最强的 `n=300` 结果是 **WMH MoE95k LoRA Aug latest**，平均链长 `1.863`，Task 5 为 `12.7%`。它相比 GTY MoE posttrain 95k 的 `1.640 / 9.7%` 更强，主要提升在 Task 3、Task 4、Task 5：
 
-```text
-GTY MoE95k:              T1 72.7 / T2 42.0 / T3 24.0 / T4 15.7 / T5  9.7
-WMH MoE95k LoRA Aug:     T1 72.0 / T2 48.0 / T3 33.3 / T4 20.3 / T5 12.7
-```
+| Model | Task 1 | Task 2 | Task 3 | Task 4 | Task 5 | Avg Len |
+|---|---:|---:|---:|---:|---:|---:|
+| GTY MoE posttrain 95k | 72.7% | 42.0% | 24.0% | 15.7% | 9.7% | 1.640 |
+| WMH MoE95k LoRA Aug latest | 72.0% | 48.0% | 33.3% | 20.3% | 12.7% | 1.863 |
 
 这说明增强和 LoRA 后训练没有显著提高第一步感知触发能力，但明显改善了长链中段和末段。换言之，收益主要来自更稳的连续控制和更好的跨任务状态分布覆盖，而不是单步 affordance 的简单提升。
 
@@ -85,18 +94,23 @@ WMH MoE95k LoRA Aug:     T1 72.0 / T2 48.0 / T3 33.3 / T4 20.3 / T5 12.7
 
 CALVIN ABC→D 的核心困难不是只完成 Task 1，而是 survival curve 是否缓慢衰减。以 WMH MoE95k LoRA Aug latest `n=300` 为例：
 
-```text
-Task1 72.0% -> Task2 48.0% -> Task3 33.3% -> Task4 20.3% -> Task5 12.7%
-```
+$$
+72.0\% \rightarrow 48.0\% \rightarrow 33.3\% \rightarrow 20.3\% \rightarrow 12.7\%.
+$$
 
 相邻条件成功率可粗略估计为：
 
-```text
-P(T2|T1)=48.0/72.0=66.7%
-P(T3|T2)=33.3/48.0=69.4%
-P(T4|T3)=20.3/33.3=61.0%
-P(T5|T4)=12.7/20.3=62.3%
-```
+$$
+P(T_2\mid T_1)=\frac{48.0}{72.0}=66.7\%,
+$$
+
+$$
+P(T_3\mid T_2)=\frac{33.3}{48.0}=69.4\%,
+\quad
+P(T_4\mid T_3)=\frac{20.3}{33.3}=61.0\%,
+\quad
+P(T_5\mid T_4)=\frac{12.7}{20.3}=62.3\%.
+$$
 
 这条曲线说明失败不是只发生在第一步；即使前一步成功，下一步仍有 30% 到 40% 的条件失败率。改进重点应放在跨 subtask 的状态恢复、receding horizon 稳定性、任务切换和 gripper/contact 时序。
 
@@ -104,12 +118,12 @@ P(T5|T4)=12.7/20.3=62.3%
 
 `WMH base8k` 到 `WMH augmented hard v2` 的提升很明显：
 
-```text
-base8k n300:            Avg 1.050, T5 3.7%
-augmented hard v2 n300: Avg 1.847, T5 12.0%
-```
+| Model | n | Avg Len | Task 5 |
+|---|---:|---:|---:|
+| WMH base8k | 300 | 1.050 | 3.7% |
+| WMH augmented hard v2 | 300 | 1.847 | 12.0% |
 
-Average Chain Length 提升 `0.797`，Task 5 提升 `8.3` 个百分点。这个结果支持两个判断：
+Average Chain Length 提升 $0.797$，Task 5 提升 $8.3$ 个百分点。这个结果支持两个判断：
 
 - ABC→D 的主要瓶颈是环境泛化和状态分布偏移，不是模型完全没有基本技能。
 - hard augmentation 或 failure-like 数据重采样对长链后半段更有效，因为后半段状态更偏离 demonstrations 的初始分布。
@@ -118,10 +132,10 @@ Average Chain Length 提升 `0.797`，Task 5 提升 `8.3` 个百分点。这个�
 
 同样是 MoE95k LoRA 后训练，Aug 优于 Mirror：
 
-```text
-Aug n300:    Avg 1.863, T5 12.7%
-Mirror n300: Avg 1.670, T5  7.7%
-```
+| Variant | n | Avg Len | Task 5 |
+|---|---:|---:|---:|
+| Aug | 300 | 1.863 | 12.7% |
+| Mirror | 300 | 1.670 | 7.7% |
 
 Mirror 可以增加左右/空间对称性，但如果 CALVIN D 环境的失败更多来自物体状态、接触阶段和任务切换，而不只是左右视角变化，则 mirror augmentation 对长链帮助有限。Aug 的高 Task 3/4/5 表明它更好覆盖了动作扰动、视觉扰动或 hard state。
 
