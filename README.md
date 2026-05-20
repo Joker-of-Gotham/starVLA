@@ -66,6 +66,8 @@ bash interaction/bin/starvla-interact.sh ensemble \
 
 本分支的详细中文说明见 [docs/SUMMERCAMP_STARVLA.md](docs/SUMMERCAMP_STARVLA.md)，考题技术总结见 [docs/SUMMERCAMP_REPORT.md](docs/SUMMERCAMP_REPORT.md)，交互式命令细节见 [interaction/README.md](interaction/README.md)。
 
+如果从一台新机器或新容器开始，优先按 [docs/SUMMERCAMP_STARVLA.md](docs/SUMMERCAMP_STARVLA.md) 的“从离线环境到正式评测的端到端路线”执行：离线环境安装、环境自检、GPU/NCCL 检查、训练 dry-run、正式训练/续训/后训练、ensemble、CALVIN 评估都在同一份文档中逐步说明。交互主菜单中的 `check`、`catalog`、`perf_check`、`launch_train`、`launch_eval`、`monitor`、`attach`、`stop` 等选项也在那里逐项解释。
+
 ### 目录职责
 
 ```text

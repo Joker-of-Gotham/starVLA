@@ -10,6 +10,11 @@ Main entry:
 bash interaction/bin/starvla-interact.sh
 ```
 
+For the Chinese end-to-end operation manual, including offline environment
+installation, data/model placement, every interactive menu option, training,
+resume, post-training, ensemble, and evaluation choices, read
+[`docs/SUMMERCAMP_STARVLA.md`](../docs/SUMMERCAMP_STARVLA.md).
+
 Useful non-interactive commands:
 
 ```bash
