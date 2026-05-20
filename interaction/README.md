@@ -256,16 +256,10 @@ multiple compatible checkpoints:
 - The output checkpoint can be passed directly to `interaction/starvla.py eval`
   or used as `train --init-checkpoint` for post-training.
 
-Fast CALVIN MoE recipe:
+CALVIN MoE recipe:
 
 ```bash
-bash interaction/bin/starvla-build-calvin-ultimate-ensemble.sh
-```
-
-Equivalent explicit command:
-
-```bash
-python interaction/starvla.py ensemble \
+bash interaction/bin/starvla-interact.sh ensemble \
   --recipe calvin_ultimate_moe \
   --method weighted_soup \
   --output-dir /inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints/ensembles/calvin_ultimate_moe_soup \

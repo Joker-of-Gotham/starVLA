@@ -55,11 +55,16 @@ bash interaction/bin/starvla-interact.sh train \
   --posttrain-from /path/to/final_model/pytorch_model.pt \
   --gpus auto --num-gpus 8
 
-# 构建 CALVIN ultimate model-soup ensemble
-bash interaction/bin/starvla-build-calvin-ultimate-ensemble.sh
+# 构建 CALVIN ultimate model-soup ensemble，输出可直接评估或继续后训练的 checkpoint
+bash interaction/bin/starvla-interact.sh ensemble \
+  --recipe calvin_ultimate_moe \
+  --method weighted_soup \
+  --run-id calvin_ultimate_moe_soup \
+  --overwrite \
+  --yes
 ```
 
-本分支的详细中文说明见 [docs/SUMMERCAMP_STARVLA.md](docs/SUMMERCAMP_STARVLA.md)，交互式命令细节见 [interaction/README.md](interaction/README.md)。
+本分支的详细中文说明见 [docs/SUMMERCAMP_STARVLA.md](docs/SUMMERCAMP_STARVLA.md)，考题技术总结见 [docs/SUMMERCAMP_REPORT.md](docs/SUMMERCAMP_REPORT.md)，交互式命令细节见 [interaction/README.md](interaction/README.md)。
 
 ### 目录职责
 
@@ -73,7 +78,7 @@ starVLA/
   assets/                  README 和文档图像资源
 ```
 
-`examples/` 没有删除：当前 CALVIN、LIBERO、RoboTwin、RoboCasa、SimplerEnv、DOMINO 等 benchmark 的数据注册、配置和评估入口仍依赖它。临时运行产物、环境包、数据集、预训练模型和 checkpoint 不进入 Git；请放在 `/inspire/.../data/starvla`、`playground/` 或 `interaction/runs/` 这类已忽略路径。
+`examples/` 没有删除：当前 CALVIN、LIBERO、RoboTwin、RoboCasa、SimplerEnv、DOMINO 等 benchmark 的数据注册、配置和评估入口仍依赖它。一次性迁移、固定复制和固定 ensemble 包装脚本已经移除，长期保留的脚本只负责交互入口、GPU 清理、强制停止和磁盘守护。临时运行产物、环境包、数据集、预训练模型和 checkpoint 不进入 Git；请放在 `/inspire/.../data/starvla`、`playground/` 或 `interaction/runs/` 这类已忽略路径。
 
 ## News
 
