@@ -78,4 +78,7 @@ DATASET_NAMED_MIXTURES = {
     "calvin_task_ABC": [
         ("calvin_abc_train_v3.0", 1.0, "calvin_abc_franka"),
     ],
+    "calvin_abc_augmented": [
+        ("calvin_abc_train_v3.0", 1.0, "calvin_abc_franka"),
+    ],
 }

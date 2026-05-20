@@ -7,6 +7,8 @@ Note: No device placement or optimizer concerns handled here (delegated to train
 """
 
 import importlib
+import gc
+import os
 import pkgutil
 from pathlib import Path
 from typing import Any, Dict, List
@@ -245,7 +247,26 @@ class baseframework(PreTrainedModel):
 
             model_state_dict = load_file(str(pretrained_checkpoint))
         else:
-            model_state_dict = torch.load(pretrained_checkpoint, map_location="cpu")
+            load_kwargs = {"map_location": "cpu"}
+            if str(pretrained_checkpoint).endswith(".pt"):
+                load_kwargs["mmap"] = os.getenv("STARVLA_TORCH_LOAD_MMAP", "1").strip().lower() not in {
+                    "0",
+                    "false",
+                    "no",
+                    "off",
+                }
+            if os.getenv("STARVLA_TORCH_LOAD_WEIGHTS_ONLY", "1").strip().lower() not in {"0", "false", "no", "off"}:
+                load_kwargs["weights_only"] = True
+            try:
+                model_state_dict = torch.load(pretrained_checkpoint, **load_kwargs)
+            except TypeError:
+                load_kwargs.pop("mmap", None)
+                load_kwargs.pop("weights_only", None)
+                model_state_dict = torch.load(pretrained_checkpoint, **load_kwargs)
+            except Exception:
+                load_kwargs.pop("mmap", None)
+                load_kwargs.pop("weights_only", None)
+                model_state_dict = torch.load(pretrained_checkpoint, **load_kwargs)
         # logger.info(f"Loading model weights from `{pretrained_checkpoint}`")
         model_keys = set(FrameworkModel.state_dict().keys())
         checkpoint_keys = set(model_state_dict.keys())
@@ -262,8 +283,11 @@ class baseframework(PreTrainedModel):
                 logger.warning(f"Unexpected keys in state_dict: {unexpected_keys}")
 
             raise e
+        finally:
+            if "model_state_dict" in locals():
+                del model_state_dict
+            gc.collect()
 
         # **ensure model is on GPU**
         FrameworkModel = FrameworkModel
         return FrameworkModel
-

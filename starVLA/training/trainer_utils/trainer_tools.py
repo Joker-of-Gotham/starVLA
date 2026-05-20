@@ -203,7 +203,14 @@ class TrainerUtils:
 
     @staticmethod
     def apply_interaction_safety_caps(cfg, logger_obj=None):
-        """Clamp unsafe interactive Qwen3-VL batch overrides before dataloaders are built."""
+        """Optional legacy batch clamp.
+
+        Interactive training used to silently reduce Qwen3-VL batch sizes here.
+        H200 runs can handle larger user-selected batches, so the clamp is now
+        opt-in only via STARVLA_ENABLE_BATCH_SAFETY_CAP=1.
+        """
+        if os.environ.get("STARVLA_ENABLE_BATCH_SAFETY_CAP", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            return cfg
         runtime_cfg = getattr(getattr(cfg, "trainer", None), "policy_runtime", None)
         runtime_enabled = False
         try:

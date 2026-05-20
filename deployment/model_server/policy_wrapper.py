@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import gc
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -55,9 +56,14 @@ class PolicyServerWrapper:
 
         logging.info("PolicyServerWrapper: loading framework from %s", self._ckpt_path)
         framework = baseframework.from_pretrained(self._ckpt_path)
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         if use_bf16:
-            framework = framework.to(torch.bfloat16)
-        framework = framework.to(device).eval()
+            framework = framework.to(device=device, dtype=torch.bfloat16)
+        else:
+            framework = framework.to(device=device)
+        framework = framework.eval()
         self._framework = framework
 
         # Co-located metadata.
@@ -87,6 +93,7 @@ class PolicyServerWrapper:
         # ckpts clients must pass unnorm_key per request.
         self._default_unnorm_key = unnorm_key
         self._norm_processors: Dict[str, PolicyNormProcessor] = {}
+        self._unnorm_key_alias_warned: set[tuple[str, str]] = set()
 
         # Peek at available keys without building a full processor.
         _, _ns = read_mode_config(self._ckpt_path)
@@ -113,11 +120,56 @@ class PolicyServerWrapper:
                 self._available_unnorm_keys,
             )
 
+    def _resolve_unnorm_key(self, unnorm_key: Optional[str], context: str) -> Optional[str]:
+        keys = list(self._available_unnorm_keys)
+        requested = unnorm_key
+        if isinstance(requested, str):
+            stripped = requested.strip()
+            if stripped.lower() in {"", "none", "null", "auto", "default"}:
+                requested = None
+            else:
+                requested = stripped
+
+        if requested is None:
+            default = self._default_unnorm_key
+            if default in keys:
+                return default
+            if isinstance(default, str) and default.strip() and default not in keys and len(keys) == 1:
+                return self._resolve_unnorm_key(default, context=context)
+            if len(keys) == 1:
+                return keys[0]
+            return None
+
+        if requested in keys:
+            return requested
+
+        if len(keys) == 1:
+            fallback = keys[0]
+            warn_key = (str(requested), fallback)
+            if warn_key not in self._unnorm_key_alias_warned:
+                logging.warning(
+                    "PolicyServerWrapper remapped unavailable unnorm_key=%r to only available key=%r "
+                    "for %s. available_unnorm_keys=%s ckpt=%s",
+                    requested,
+                    fallback,
+                    context,
+                    keys,
+                    self._ckpt_path,
+                )
+                self._unnorm_key_alias_warned.add(warn_key)
+            return fallback
+
+        raise KeyError(
+            f"unnorm_key={requested!r} not in {keys}. "
+            "For multi-embodiment checkpoints pass one of the available_unnorm_keys."
+        )
+
     def _get_processor(self, unnorm_key: Optional[str]) -> PolicyNormProcessor:
-        cache_key = unnorm_key if unnorm_key is not None else "__default__"
+        resolved_key = self._resolve_unnorm_key(unnorm_key, context="_get_processor")
+        cache_key = resolved_key if resolved_key is not None else "__default__"
         if cache_key not in self._norm_processors:
             self._norm_processors[cache_key] = PolicyNormProcessor(
-                self._ckpt_path, unnorm_key=unnorm_key
+                self._ckpt_path, unnorm_key=resolved_key
             )
         return self._norm_processors[cache_key]
 
@@ -206,15 +258,12 @@ class PolicyServerWrapper:
         Returns:
             ``{"actions": np.ndarray[B, T, D]}`` -- un-normalized.
         """
-        effective_key = unnorm_key if unnorm_key is not None else self._default_unnorm_key
+        effective_key = self._resolve_unnorm_key(unnorm_key, context="predict_action")
         if effective_key is None:
-            if len(self._available_unnorm_keys) == 1:
-                effective_key = self._available_unnorm_keys[0]
-            else:
-                raise ValueError(
-                    f"predict_action: unnorm_key not specified and no default set. "
-                    f"Pass one of {self._available_unnorm_keys}."
-                )
+            raise ValueError(
+                f"predict_action: unnorm_key not specified and no default set. "
+                f"Pass one of {self._available_unnorm_keys}."
+            )
         proc = self._get_processor(effective_key)
 
         prepared_examples = [self._adapt_example_state(example) for example in examples]

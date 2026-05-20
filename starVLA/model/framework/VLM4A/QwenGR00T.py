@@ -34,6 +34,10 @@ IGNORE_INDEX = -100
 from starVLA.model.framework.base_framework import baseframework
 from starVLA.model.framework.share_tools import merge_framework_config
 from starVLA.model.modules.action_model.GR00T_ActionHeader import FlowmatchingActionHead, get_action_model
+from starVLA.model.modules.action_model.MoE_GR00T_ActionHeader import (
+    get_moe_action_model,
+    get_moe_adaptive_action_model,
+)
 from starVLA.model.modules.vlm import get_vlm_model
 from starVLA.model.tools import FRAMEWORK_REGISTRY
 from starVLA.training.trainer_utils.trainer_tools import resize_images
@@ -265,6 +269,40 @@ class Qwen_GR00T(baseframework):
 
         normalized_actions = pred_actions.detach().float().cpu().numpy()
         return {"normalized_actions": normalized_actions}
+
+
+@FRAMEWORK_REGISTRY.register("QwenGR00T_MoE")
+class Qwen_GR00T_MoE(Qwen_GR00T):
+    """QwenGR00T with a soft MoE action decoder.
+
+    This mirrors the member-local GTY MoE implementation so released MoE
+    checkpoints can be loaded from the shared StarVLA runtime.
+    """
+
+    def __init__(self, config: Optional[dict] = None, **kwargs) -> None:
+        baseframework.__init__(self)
+        self.config = merge_framework_config(QwenGR00TDefaultConfig, config)
+        self.qwen_vl_interface = get_vlm_model(config=self.config)
+        self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim = (
+            self.qwen_vl_interface.model.config.hidden_size
+        )
+        self.action_model = get_moe_action_model(config=self.config)
+        self.action_horizon = int(self.config.framework.action_model.action_horizon)
+
+
+@FRAMEWORK_REGISTRY.register("QwenGR00T_MoE_Adaptive")
+class Qwen_GR00T_MoE_Adaptive(Qwen_GR00T):
+    """QwenGR00T MoE with adaptive inference denoising."""
+
+    def __init__(self, config: Optional[dict] = None, **kwargs) -> None:
+        baseframework.__init__(self)
+        self.config = merge_framework_config(QwenGR00TDefaultConfig, config)
+        self.qwen_vl_interface = get_vlm_model(config=self.config)
+        self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim = (
+            self.qwen_vl_interface.model.config.hidden_size
+        )
+        self.action_model = get_moe_adaptive_action_model(config=self.config)
+        self.action_horizon = int(self.config.framework.action_model.action_horizon)
 
 
 if __name__ == "__main__":

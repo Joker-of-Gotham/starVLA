@@ -15,6 +15,8 @@ from .ui import clear_and_print, human_age, human_bytes, severity_style
 
 STEP_RE = re.compile(r"Step\s+(\d+),\s+(?:Loss|Metrics):\s+(\{.*\})\)?")
 TQDM_RE = re.compile(r"(\d+(?:\.\d+)?)%\|.*?\|\s*(\d+)/(\d+)")
+EVAL_PROGRESS_RE = re.compile(r"\[progress\].*?\blocal=(\d+)/(\d+)")
+EVAL_ASSIGNED_RE = re.compile(r"Evaluating\s+(\d+)(?:/\d+)?\s+(?:selected\s+)?CALVIN sequences")
 ERROR_LINE_RE = re.compile(r"(error|exception|traceback|failed|fatal|out of memory|nan|inf|warning)", re.I)
 
 
@@ -28,10 +30,13 @@ def iter_jobs() -> list[dict[str, Any]]:
                 continue
             meta["meta_path"] = str(meta_path)
             meta["session_alive"] = session_exists(meta.get("tmux_session", meta.get("job_name", "")))
-            meta["latest"] = parse_latest_metrics(Path(meta.get("log_file", "")), meta.get("max_train_steps"))
+            meta["latest"] = parse_job_latest(meta)
             events = read_events(meta_path.parent, lines=40)
             meta["latest_event"] = events[-1] if events else {}
-            meta["diagnosis"] = diagnose_log(tail(Path(meta.get("log_file", "")), lines=400), diagnostic_event(events))
+            diagnostic_log: list[str] = []
+            for _, path in _job_log_files(meta):
+                diagnostic_log.extend(tail(path, lines=120))
+            meta["diagnosis"] = diagnose_log(diagnostic_log, diagnostic_event(events))
             jobs.append(meta)
     return jobs
 
@@ -108,12 +113,96 @@ def parse_latest_metrics(log_file: Path, max_steps: int | None = None) -> dict[s
     return result
 
 
+def parse_job_latest(job: dict[str, Any]) -> dict[str, Any]:
+    if job.get("kind") == "eval" and job.get("preset") == "calvin":
+        return parse_calvin_eval_latest(job)
+    return parse_latest_metrics(Path(job.get("log_file", "")), job.get("max_train_steps"))
+
+
+def parse_calvin_eval_latest(job: dict[str, Any]) -> dict[str, Any]:
+    total_sequences = _safe_int(job.get("num_sequences") or job.get("trials"))
+    result: dict[str, Any] = {"step": None, "max_steps": total_sequences, "epoch": None, "metrics": {}, "progress": None}
+    job_dir = Path(job.get("job_dir") or Path(job.get("meta_path", ".")).parent)
+
+    merged = _read_calvin_merged(job, job_dir)
+    if merged:
+        done = _safe_int(merged.get("sequence_count") or merged.get("num_sequences"))
+        total = total_sequences or done
+        result["step"] = done
+        result["max_steps"] = total
+        result["metrics"] = {
+            "eval_sequences_done": done,
+            "eval_total_sequences": total,
+            "avg_seq_len": merged.get("avg_seq_len"),
+            "chain_sr": merged.get("chain_sr"),
+            "eval_complete": True,
+        }
+        if done is not None and total:
+            result["progress"] = {"percent": round(done * 100 / total, 2), "current": done, "total": total}
+        return result
+
+    progress_items = _read_calvin_worker_progress(job, job_dir)
+    if progress_items:
+        done = sum(item.get("current") or 0 for item in progress_items)
+        local_total = sum(item.get("total") or 0 for item in progress_items)
+        total = total_sequences or local_total or None
+        result["step"] = done
+        result["max_steps"] = total
+        result["metrics"] = {
+            "eval_sequences_done": done,
+            "eval_total_sequences": total,
+            "eval_workers_with_progress": len(progress_items),
+            "eval_workers": job.get("parallel_workers"),
+        }
+        if total:
+            result["progress"] = {"percent": round(done * 100 / total, 2), "current": done, "total": total}
+        return result
+
+    client_progress: list[tuple[int, int]] = []
+    for name, path in _job_log_files(job):
+        if not name.startswith("client"):
+            continue
+        current = None
+        total = None
+        for line in tail(path, lines=1200):
+            progress_match = EVAL_PROGRESS_RE.search(line)
+            if progress_match:
+                current = int(progress_match.group(1))
+                total = int(progress_match.group(2))
+            tqdm_match = TQDM_RE.search(line)
+            if tqdm_match:
+                current = int(tqdm_match.group(2))
+                total = int(tqdm_match.group(3))
+            assigned_match = EVAL_ASSIGNED_RE.search(line)
+            if assigned_match and total is None:
+                total = int(assigned_match.group(1))
+        if total is not None:
+            client_progress.append((int(current or 0), int(total)))
+
+    if client_progress:
+        done = sum(item[0] for item in client_progress)
+        local_total = sum(item[1] for item in client_progress)
+        total = total_sequences or local_total
+        result["step"] = done
+        result["max_steps"] = total
+        result["metrics"] = {
+            "eval_sequences_done": done,
+            "eval_total_sequences": total,
+            "eval_workers_with_progress": len(client_progress),
+            "eval_workers": job.get("parallel_workers"),
+        }
+        result["progress"] = {"percent": round(done * 100 / total, 2), "current": done, "total": total}
+        return result
+
+    return result
+
+
 def collect_job_snapshot(job: dict[str, Any], tail_lines: int = 18, diagnostic_lines: int = 800) -> dict[str, Any]:
     job_dir = Path(job.get("job_dir") or Path(job.get("meta_path", ".")).parent)
     session = job.get("tmux_session", job.get("job_name", ""))
     log_files = _job_log_files(job)
     primary_log = Path(job.get("log_file") or (log_files[0][1] if log_files else ""))
-    latest = parse_latest_metrics(primary_log, job.get("max_train_steps"))
+    latest = parse_job_latest(job)
     events = read_events(job_dir, lines=80)
     event = events[-1] if events else {}
     diagnostic_log: list[str] = []
@@ -139,6 +228,63 @@ def collect_job_snapshot(job: dict[str, Any], tail_lines: int = 18, diagnostic_l
         "primary_log_mtime": primary_stat.get("mtime"),
         "gpu_snapshot": parse_gpu_snapshot(event.get("gpu_snapshot") or []),
     }
+
+
+def _safe_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_json_file(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _calvin_eval_base_dirs(job: dict[str, Any], job_dir: Path) -> list[Path]:
+    values = [job.get("eval_log_dir"), job_dir / "calvin_eval", job_dir / "calvin_eval_logs"]
+    out: list[Path] = []
+    for value in values:
+        if not value:
+            continue
+        text = str(value)
+        if text.startswith("${STARVLA_JOB_DIR}"):
+            text = text.replace("${STARVLA_JOB_DIR}", str(job_dir), 1)
+        path = Path(text)
+        if path not in out:
+            out.append(path)
+    return out
+
+
+def _read_calvin_merged(job: dict[str, Any], job_dir: Path) -> dict[str, Any] | None:
+    for base in _calvin_eval_base_dirs(job, job_dir):
+        data = _read_json_file(base / "merged_results.json")
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _read_calvin_worker_progress(job: dict[str, Any], job_dir: Path) -> list[dict[str, int]]:
+    items: list[dict[str, int]] = []
+    seen: set[Path] = set()
+    for base in _calvin_eval_base_dirs(job, job_dir):
+        for path in sorted((base / "workers").glob("*/sequence_progress.json")):
+            if path in seen:
+                continue
+            seen.add(path)
+            data = _read_json_file(path)
+            if not isinstance(data, dict):
+                continue
+            current = _safe_int(data.get("num_sequences"))
+            total = _safe_int(data.get("total_sequences"))
+            if current is not None or total is not None:
+                items.append({"current": current or 0, "total": total or 0})
+    return items
 
 
 def checkpoint_report(job: dict[str, Any]) -> dict[str, Any]:

@@ -19,6 +19,10 @@ unset DEBUG
 export STARVLA_ENABLE_DEBUGPY=${STARVLA_ENABLE_DEBUGPY:-0}
 export WANDB_MODE=${WANDB_MODE:-disabled}
 export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-false}
+export STARVLA_CLIENT_CONNECT_TIMEOUT=${STARVLA_CLIENT_CONNECT_TIMEOUT:-900}
+export STARVLA_CLIENT_FAIL_ON_CONNECT_TIMEOUT=${STARVLA_CLIENT_FAIL_ON_CONNECT_TIMEOUT:-1}
+export STARVLA_CLIENT_REQUEST_TIMEOUT=${STARVLA_CLIENT_REQUEST_TIMEOUT:-300}
+export STARVLA_CLIENT_FAIL_ON_REQUEST_TIMEOUT=${STARVLA_CLIENT_FAIL_ON_REQUEST_TIMEOUT:-1}
 export STARVLA_CALVIN_RENDER_BACKEND=${STARVLA_CALVIN_RENDER_BACKEND:-auto}
 export STARVLA_CALVIN_STATE_DIM=${STARVLA_CALVIN_STATE_DIM:-auto}
 export STARVLA_CALVIN_STATE_SLICE=${STARVLA_CALVIN_STATE_SLICE:-first}
@@ -47,14 +51,16 @@ import pybullet as p
 
 render_gpu = os.environ.get("STARVLA_CALVIN_RENDER_GPU", "").strip()
 if render_gpu:
+    fallback_gpu = render_gpu.split(",")[0]
     try:
         from calvin_env.utils.utils import get_egl_device_id
 
-        egl_id = get_egl_device_id(int(render_gpu.split(",")[0]))
+        egl_id = get_egl_device_id(int(fallback_gpu))
         os.environ["EGL_VISIBLE_DEVICES"] = str(egl_id)
         os.environ["EGL_VISIBLE_DEVICE"] = str(egl_id)
     except Exception:
-        pass
+        os.environ.setdefault("EGL_VISIBLE_DEVICES", fallback_gpu)
+        os.environ.setdefault("EGL_VISIBLE_DEVICE", fallback_gpu)
 
 cid = p.connect(p.DIRECT, options="--width=16 --height=16")
 try:
@@ -137,7 +143,7 @@ esac
 
 host=${host:-127.0.0.1}
 base_port=${base_port:-5694}
-unnorm_key=${unnorm_key:-franka}
+unnorm_key=${unnorm_key:-${UNNORM_KEY:-auto}}
 your_ckpt=${your_ckpt:-${CKPT_PATH:-${DEFAULT_CKPT}}}
 dataset_path=${dataset_path:-/inspire/qb-ilm2/project/26summer-camp-10/public/inspire_shared/calvin_d_d/validation}
 calvin_config_path=${calvin_config_path:-${CALVIN_HOME}/calvin_models/conf}
@@ -181,6 +187,8 @@ echo "[starvla-calvin-eval] PYOPENGL_PLATFORM=${PYOPENGL_PLATFORM:-}"
 echo "[starvla-calvin-eval] MUJOCO_GL=${MUJOCO_GL:-}"
 echo "[starvla-calvin-eval] state_dim=${STARVLA_CALVIN_STATE_DIM}"
 echo "[starvla-calvin-eval] state_slice=${STARVLA_CALVIN_STATE_SLICE}"
+echo "[starvla-calvin-eval] connect_timeout=${STARVLA_CLIENT_CONNECT_TIMEOUT} fail_on_connect=${STARVLA_CLIENT_FAIL_ON_CONNECT_TIMEOUT}"
+echo "[starvla-calvin-eval] request_timeout=${STARVLA_CLIENT_REQUEST_TIMEOUT} fail_on_request=${STARVLA_CLIENT_FAIL_ON_REQUEST_TIMEOUT}"
 
 "${calvin_python}" ./examples/calvin/eval_files/eval_calvin.py \
     --args.pretrained-path "${your_ckpt}" \

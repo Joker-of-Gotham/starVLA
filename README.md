@@ -18,6 +18,70 @@
 
 In StarVLA (also a pun on "start VLA" ),  each functional component (model, data, trainer, config, evaluation, etc.) follows a top-down, intuitive separation and high-cohesion, low-coupling principle, enabling plug-and-play design, rapid prototyping, and independent debugging.
 
+## SII SummerCamp 分支快速入口
+
+本分支面向 26summer-camp StarVLA 训练、后训练、评估和 ensemble 流程做了工程化整理。核心目标是把
+`dataset -> training policy -> base model -> action expert -> structure policy -> train/post-train/eval`
+贯通成可交互、可恢复、可监控、可复现的工作流。
+
+最常用入口：
+
+```bash
+# 交互式训练/评估/监控总入口
+bash interaction/bin/starvla-interact.sh
+
+# 查看数据集、base model、action expert、Training Policy、Structure Policy 全部清单
+bash interaction/bin/starvla-interact.sh catalog --kind all
+
+# 8xH200 训练前性能和 NCCL 检查
+bash interaction/bin/starvla-interact.sh perf-check --gpus auto --num-gpus 8
+
+# CALVIN 训练 dry-run：只打印命令和输出目录，不启动
+bash interaction/bin/starvla-interact.sh train \
+  --dataset calvin_abc \
+  --training-policy T01 T06 T07 \
+  --base-model qwen3vl_4b_action \
+  --action-expert QwenOFT \
+  --structure-policy S01 S07 \
+  --gpus auto --num-gpus 8 --dry-run
+
+# 从已有 checkpoint 做后训练，而不是从 base pretrained 重新开始
+bash interaction/bin/starvla-interact.sh train \
+  --dataset calvin_abc \
+  --training-policy T20 T21 T24 T27 T28 \
+  --base-model qwen3vl_4b_action \
+  --action-expert QwenOFT \
+  --structure-policy S01 S26 S27 S30 \
+  --posttrain-from /path/to/final_model/pytorch_model.pt \
+  --gpus auto --num-gpus 8
+
+# 构建 CALVIN ultimate model-soup ensemble，输出可直接评估或继续后训练的 checkpoint
+bash interaction/bin/starvla-interact.sh ensemble \
+  --recipe calvin_ultimate_moe \
+  --method weighted_soup \
+  --run-id calvin_ultimate_moe_soup \
+  --overwrite \
+  --yes
+```
+
+本分支的详细中文说明见 [docs/SUMMERCAMP_STARVLA.md](docs/SUMMERCAMP_STARVLA.md)，Training/Structure Policy 完整矩阵见 [docs/POLICY_MATRIX.md](docs/POLICY_MATRIX.md)，技术报告见 [docs/TECHNICAL_REPORT.md](docs/TECHNICAL_REPORT.md)，CALVIN ABC→D 测评报告见 [docs/CALVIN_EVALUATION_REPORT.md](docs/CALVIN_EVALUATION_REPORT.md)，报告索引见 [docs/SUMMERCAMP_REPORT.md](docs/SUMMERCAMP_REPORT.md)，交互式命令细节见 [interaction/README.md](interaction/README.md)。
+
+如果从一台新机器或新容器开始，优先按 [docs/SUMMERCAMP_STARVLA.md](docs/SUMMERCAMP_STARVLA.md) 的“从离线环境到正式评测的端到端路线”执行：离线环境安装、环境自检、GPU/NCCL 检查、训练 dry-run、正式训练/续训/后训练、ensemble、CALVIN 评估都在同一份文档中逐步说明。交互主菜单中的 `check`、`catalog`、`perf_check`、`launch_train`、`launch_eval`、`monitor`、`attach`、`stop` 等选项也在那里逐项解释。
+
+### 目录职责
+
+```text
+starVLA/
+  starVLA/                 核心 Python 包：dataloader、framework、action/world modules、trainer
+  examples/                各 benchmark 的训练配置、数据 registry、评估脚本
+  interaction/             SummerCamp 交互式训练/评估/ensemble/tmux 管理层
+  deployment/model_server/ WebSocket policy server/client 与服务端归一化/反归一化
+  docs/                    架构、WM4A、贡献说明和本分支中文使用文档
+  assets/                  README 和文档图像资源
+```
+
+`examples/` 没有删除：当前 CALVIN、LIBERO、RoboTwin、RoboCasa、SimplerEnv、DOMINO 等 benchmark 的数据注册、配置和评估入口仍依赖它。一次性迁移、固定复制和固定 ensemble 包装脚本已经移除，长期保留的脚本只负责交互入口、GPU 清理、强制停止和磁盘守护。临时运行产物、环境包、数据集、预训练模型和 checkpoint 不进入 Git；请放在 `/inspire/.../data/starvla`、`playground/` 或 `interaction/runs/` 这类已忽略路径。
+
 ## News
 
 > **⚠️ Branch notice:** The `starVLA_dev` branch is where we actively merge new features and may be temporarily unstable. For verified results, use the stable `starVLA` branch. Thanks to StarVLA's low-coupling design, switching between branches is painless. We encourage trying `starVLA_dev` and welcome PRs if you spot any issues!

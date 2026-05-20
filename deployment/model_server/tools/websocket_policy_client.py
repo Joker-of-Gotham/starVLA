@@ -32,6 +32,13 @@ def _optional_positive_float(value: Optional[object]) -> Optional[float]:
     return parsed if parsed > 0 else None
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 class WebsocketClientPolicy:
     """Implements the Policy interface by communicating with a server over websocket.
 
@@ -53,6 +60,8 @@ class WebsocketClientPolicy:
         self._api_key = api_key
         request_timeout = os.getenv("STARVLA_CLIENT_REQUEST_TIMEOUT", "").strip()
         self._request_timeout = _optional_positive_float(request_timeout) if request_timeout else None
+        self._fail_on_connect_timeout = _env_flag("STARVLA_CLIENT_FAIL_ON_CONNECT_TIMEOUT")
+        self._fail_on_request_timeout = _env_flag("STARVLA_CLIENT_FAIL_ON_REQUEST_TIMEOUT")
         timeout = connect_timeout
         if timeout is None and os.getenv("STARVLA_CLIENT_CONNECT_TIMEOUT"):
             timeout = os.environ["STARVLA_CLIENT_CONNECT_TIMEOUT"]
@@ -106,6 +115,8 @@ class WebsocketClientPolicy:
         while True:
             if timeout is not None and time.time() - start_time > timeout:
                 now = time.time()
+                if self._fail_on_connect_timeout:
+                    raise TimeoutError(f"Timed out waiting for server at {self._uri} after {now - start_time:.0f} seconds.")
                 if now - last_timeout_notice >= min(timeout, 300):
                     logging.warning(
                         "Still waiting for server at %s after %.0f seconds; continuing without aborting eval.",
@@ -122,8 +133,17 @@ class WebsocketClientPolicy:
                     conn = self._connect_websocket_client(headers)
                 if hasattr(conn, "settimeout") and self._request_timeout is not None:
                     conn.settimeout(self._request_timeout)
-                metadata = msgpack_numpy.unpackb(conn.recv())
+                try:
+                    metadata_blob = conn.recv(timeout=self._request_timeout)
+                except TypeError:
+                    metadata_blob = conn.recv()
+                metadata = msgpack_numpy.unpackb(metadata_blob)
                 return conn, metadata
+            except TimeoutError:
+                if self._fail_on_connect_timeout:
+                    raise TimeoutError(f"Timed out reading server metadata from {self._uri}.")
+                logging.info(f"Still waiting for server {self._uri} ...")
+                time.sleep(2)
             except (ConnectionRefusedError, OSError):
                 logging.info(f"Still waiting for server {self._uri} ...")
                 time.sleep(2)
@@ -144,6 +164,8 @@ class WebsocketClientPolicy:
                     self._ws.send(data)
                     sent = True
                 except TimeoutError:
+                    if self._fail_on_request_timeout:
+                        raise TimeoutError(f"Timed out while sending policy request to {self._uri}.")
                     logging.warning("Still trying to send policy request to %s; continuing without aborting eval.", self._uri)
                     continue
                 except (ConnectionError, OSError) as exc:
@@ -158,6 +180,8 @@ class WebsocketClientPolicy:
                     response = self._ws.recv()
                 break
             except TimeoutError:
+                if self._fail_on_request_timeout:
+                    raise TimeoutError(f"Timed out waiting for policy response from {self._uri}.")
                 logging.warning("Still waiting for policy response from %s; continuing without aborting eval.", self._uri)
                 continue
             except (ConnectionError, OSError) as exc:
@@ -167,4 +191,10 @@ class WebsocketClientPolicy:
                 sent = False
         if isinstance(response, str):
             raise RuntimeError(f"Error in inference server:\n{response}")
-        return msgpack_numpy.unpackb(response)
+        decoded = msgpack_numpy.unpackb(response)
+        if isinstance(decoded, dict) and decoded.get("ok") is False:
+            error = decoded.get("error") or {}
+            message = error.get("message", decoded)
+            request_id = decoded.get("request_id", "default")
+            raise RuntimeError(f"Policy server returned error for request_id={request_id}: {message}")
+        return decoded
