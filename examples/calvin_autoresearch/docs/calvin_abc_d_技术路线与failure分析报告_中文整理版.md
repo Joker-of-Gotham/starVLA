@@ -13,7 +13,7 @@
 
 实验结果表明，baseline 的主要失败不是由简单的 action noise 或 action jitter 导致的，而是集中在 hard atomic tasks、first-step failure、contact/affordance grounding，以及部分 left/right directional tasks 上。也就是说，模型首先需要更可靠地理解和执行单个困难任务，才能进一步提升 long-horizon chained success。
 
-当前最可靠、已经验证的 WMH 主路线是：
+当前最可靠、已经验证且 task regression 最少的 WMH 主路线仍是：
 
 **hard-task balanced ABC training + controlled language paraphrase + task-aware image augmentation**。
 
@@ -21,13 +21,13 @@
 
 LoRA 也被证明有效。`LoRA2000 n300` 达到 `avg_seq_len=1.63`、`SR@5=9.7%`，明显优于 baseline，但单独使用 LoRA 仍弱于 hardv2 augmented data route。
 
-MoE action head 具有潜力，尤其是 GTY MoE95k 在 N=100 的 D evaluation 上达到 `avg_seq_len=1.91`、`SR@5=12.0%`。但 MoE-Adaptive 同时暴露出明显 task bias：它显著提升 lightbulb tasks，却严重伤害 drawer tasks。因此 MoE 不能只看 aggregate score，必须通过 per-task metrics 做验证。
+MoE action head 具有潜力，但必须用 per-task metrics 做约束。新增 D n300 结果显示，GTY MoE95k 的 `avg_seq_len=1.64`、`SR@5=9.7%`，明显强于 base8k，但弱于 WMH hardv2 aug。WMH 将 GTY MoE95k 与 fresh Qwen LoRA、hardv2 augmented ABC data 组合后，no-mirror `steps_3000` 在 D n300 上达到 `avg_seq_len=1.863`、`SR@5=12.7%`，成为当前 WMH **aggregate 最强 verified branch**。但它同时出现 `close_drawer` 和 `lightbulb` 回退，因此不能只凭均值宣布为最终路线。
 
-当前最高潜力候选路线是：
+当前最高潜力候选路线已经从 pending 状态进入初步验证状态：
 
 **GTY MoE95k + fresh Qwen LoRA + WMH hardv2 augmented ABC data**。
 
-该路线尚未被 D n300/n1000 验证，因此不能直接作为最终结论。它应当先与 WMH hardv2 aug、LoRA2000 和 GTY MoE95k 做公平对比，再决定是否升级为最终主路线。
+当前结论是：no-mirror 版本优于 mirror 版本，并在 aggregate 上略超 hardv2 aug；但由于 task-level regression 和 `steps_5000/7000/8000` 尚缺少同规模 n300/n1000 验证，它应被视为新的 finalist candidate，而不是已经完全替代 hardv2 aug 的最终方案。
 
 ---
 
@@ -95,19 +95,25 @@ official CALVIN D eval data:
 | WMH state8+connector 8k | `eval_8k_state8_connector_steps8000_fast_w4x8_d_n1000_0519_143010` | 1000 | 1.086 | 53.2% | 27.9% | 15.2% | 8.0% | 4.3% | Stable baseline |
 | WMH base8k n300 | `eval_compare_d_n300_0520_031701/base8k` | 300 | 1.050 | 54.0% | 25.7% | 13.7% | 8.0% | 3.7% | 与 n1000 趋势一致的小规模评估 |
 | WMH LoRA2000 | `eval_compare_d_n300_0520_031356/lora2000` | 300 | 1.630 | 64.0% | 43.7% | 27.3% | 18.3% | 9.7% | 相比 base8k 明显提升 |
-| WMH hardv2 aug | `eval_compare_d_n300_0520_031701/aug_hardv2` | 300 | 1.847 | 72.0% | 51.0% | 29.3% | 20.3% | 12.0% | 当前 WMH 最强 verified branch |
+| WMH hardv2 aug | `eval_compare_d_n300_0520_031701/aug_hardv2` | 300 | 1.847 | 72.0% | 51.0% | 29.3% | 20.3% | 12.0% | 当前最稳 verified route；per-task regression 少 |
 | WMH mirror hardv2 | manually aggregated from `eval_compare_d_n300_0520_033750/mirror_hardv2/worker_*` | 300 | 1.753 | 72.7% | 47.7% | 29.0% | 16.3% | 9.7% | first-step 有帮助，但整体不如 non-mirror hardv2 |
 | WMH MoE-Adaptive | `eval_moe_adaptive_d_n300_0520_043745` | 300 | 1.397 | 67.7% | 38.0% | 19.0% | 10.3% | 4.7% | mixed result；提升部分 light tasks，但伤害 drawer |
-| GTY MoE95k | `eval_abc_augmented_moe_GTY_0519_092147_abc_to_d_n1000_0519_145552/results.json` | 100 | 1.910 | 76.0% | 54.0% | 32.0% | 17.0% | 12.0% | 强外部团队分支，但当前统计为 N=100，不能与 n300/n1000 完全公平比较 |
+| GTY MoE95k | `members/GTY/reports/eval_moe95k_d_n300_detailed_0520_060051` | 300 | 1.640 | 72.7% | 42.0% | 24.0% | 15.7% | 9.7% | 强于 base8k，但存在 drawer/lightbulb regression |
+| WMH MoE95k+LoRA no-mirror | `eval_moe95k_lora_aug_latest_d_n300_0520_063132` (`steps_3000`) | 300 | 1.863 | 72.0% | 48.0% | 33.3% | 20.3% | 12.7% | 当前 aggregate 最强 verified branch；但 drawer/lightbulb 回退 |
+| WMH MoE95k+LoRA mirror | `eval_moe95k_lora_mirror_latest_d_n300_0520_063133` (`steps_3000`) | 300 | 1.670 | 72.3% | 44.7% | 28.3% | 14.0% | 7.7% | 明显弱于 no-mirror |
+| WMH MoE95k+LoRA no-mirror | `eval_moe95k_lora_aug_latest_d_n100_0520_072535` (`steps_5000`) | 100 | 1.940 | 77.0% | 55.0% | 35.0% | 18.0% | 9.0% | n100 指标更高，但不能与 n300 直接等价 |
+| WMH MoE95k+LoRA mirror | `eval_moe95k_lora_mirror_latest_d_n100_0520_072557` (`steps_5000`) | 100 | 1.740 | 72.0% | 49.0% | 28.0% | 15.0% | 10.0% | n100；仍弱于 no-mirror aggregate |
 
-说明：虽然 GTY MoE95k 的路径名中包含 `n1000`，但当前可用/聚合的结果为 `N=100`，因此只能作为强潜力参考，不能直接与 WMH 的 n300/n1000 分支做完全公平的数值比较。
+说明：
 
-当前仍在训练、尚未进行 D evaluation 的分支：
+- `steps_3000` 的 MoE95k+LoRA n300 是当前最可比较的新结果。
+- `steps_5000` 只有 n100，能说明趋势，但不能替代 n300/n1000。
+- 训练已继续产生 `steps_7000` / `steps_8000`，但它们目前尚未完成同规模 D eval，因此不能直接称为最佳模型。
 
-- `abc_moe95k_lora_aug_3h_bs96_0520_045012`：基于 GTY MoE95k，加入 fresh LoRA，不使用 mirror，`BATCH_SIZE=96`，`NUM_PROCESSES=8`。
-- `abc_moe95k_lora_mirror_3h_bs96_0520_045300`：同上，但加入 left/right mirror augmentation。
+当前仍需补充 evaluation 的 checkpoint：
 
-两个分支都已经至少产生 `steps_3000_pytorch_model.pt`，训练速度约为 `1.5-1.6s/step`，但尚未在 CALVIN D 上评估。
+- no-mirror `abc_moe95k_lora_aug_3h_bs96_0520_045012/checkpoints/steps_8000_pytorch_model.pt`
+- mirror `abc_moe95k_lora_mirror_3h_bs96_0520_045300/checkpoints/steps_8000_pytorch_model.pt`
 
 ---
 
@@ -125,21 +131,21 @@ official CALVIN D eval data:
 | --- | --- | --- | --- | --- | --- |
 | A. Frozen-Qwen + GR00T action-head scaling | 保持 Qwen frozen，只训练 StarVLA QwenGR00T action head | baseline 和 state8+connector 约为 `avg_seq_len=1.05-1.09`，`SR@5=3.7-4.3%` | 干净、合规、易复现 | 不能解决 hard tasks 和 long-chain failure | 仅保留为 reference baseline |
 | B. State/proprio + connector | 加入 8-D robot state，训练 interface/action head | state8+connector n1000: `avg_seq_len=1.086`, `SR@5=4.3%` | 理论上有助于 robot pose、gripper state 和 subtask progress | 当前结果不能证明 state 被有效使用，需要 zero/shuffle sanity tests | 作为中期支持方向，不作为当前主路线 |
-| C. Hard-task balanced data + controlled language/image augmentation | oversample hard atomic tasks；加入 canonical mapping、paraphrases 和 task-aware light visual augmentation | hardv2 aug n300: `avg_seq_len=1.847`, `SR@1=72.0%`, `SR@5=12.0%` | 当前 WMH 最强 verified branch；直接针对主要 failure mass | sampler、paraphrase、image aug 的收益耦合，需要后续 ablation | 当前 verified main route |
+| C. Hard-task balanced data + controlled language/image augmentation | oversample hard atomic tasks；加入 canonical mapping、paraphrases 和 task-aware light visual augmentation | hardv2 aug n300: `avg_seq_len=1.847`, `SR@1=72.0%`, `SR@5=12.0%` | per-task 最稳；直接针对主要 failure mass | sampler、paraphrase、image aug 的收益耦合，需要后续 ablation | 当前 safest verified main route |
 | D. Left/right mirror augmentation | mirror images，交换 left/right language，并对 action axes 做 sign transform | mirror hardv2 n300: `avg_seq_len=1.753`, `SR@1=72.7%`, `SR@5=9.7%` | 不引入额外数据即可增强 left/right coverage | 略弱于 non-mirror hardv2；可能存在 wrist/action sign inconsistency | 保留为独立分支，不作为默认 |
 | E. Qwen LoRA | 在 Qwen 后几层 attention 上加入 small LoRA，同时保持 base Qwen 基本隔离 | LoRA2000 n300: `avg_seq_len=1.630`, `SR@5=9.7%` | 用少量可训练参数增强 grounding 和 representation adaptation | LoRA alone 不如 hardv2 data route | 与更强数据分布或 action head 组合，不单独作为最终路线 |
-| F. MoE / adaptive action head | 使用更强或更专门化的 action-head capacity，而不是单一 GR00T DiT head | MoE-Adaptive n300: `avg_seq_len=1.397`，但 light tasks 很强；GTY MoE95k n100: `avg_seq_len=1.91` | 对 task-specific motion modes 有较高 upside | Adaptive branch 严重伤害 drawer；GTY n100 不可直接与 n300/n1000 比较 | 有潜力，但必须做 n300/n1000 和 per-task verification |
-| G. GTY MoE95k + fresh LoRA + hardv2 data | 从合规 ABC-trained team MoE checkpoint 出发，加入 fresh LoRA，并用 WMH hardv2 ABC data 训练 | 当前仍在训练，D n300 pending | 组合当前最强三个信号：hard-task data、LoRA、MoE head | 可能扰动强 MoE policy；mirror variant 可能引入 geometry noise | 当前 highest-upside experimental route |
+| F. MoE / adaptive action head | 使用更强或更专门化的 action-head capacity，而不是单一 GR00T DiT head | MoE-Adaptive n300: `avg_seq_len=1.397`；GTY MoE95k n300: `avg_seq_len=1.640`, `SR@5=9.7%` | 对 task-specific motion modes 有较高 upside | Adaptive/GTY 分支均暴露 drawer/lightbulb regression | 有潜力，但必须做 per-task regression gate |
+| G. GTY MoE95k + fresh LoRA + hardv2 data | 从合规 ABC-trained team MoE checkpoint 出发，加入 fresh LoRA，并用 WMH hardv2 ABC data 训练 | no-mirror `steps_3000` n300: `avg_seq_len=1.863`, `SR@5=12.7%`; mirror `steps_3000` n300: `avg_seq_len=1.670`, `SR@5=7.7%` | aggregate 已略超 hardv2 aug；slider/stack 等任务改善明显 | drawer/lightbulb regression；latest steps 尚未评估；mirror 明显不稳 | 升级为 finalist candidate，但需 n300/n1000 和 per-task regression gate |
 
 ### 5.1 Verified Main Route
 
-当前已经验证的主路线是：
+当前已经验证、且 per-task 风险最可控的主路线是：
 
 **hard-task balanced ABC training + controlled language paraphrase + task-aware image augmentation**。
 
 选择它的理由是：
 
-1. 它是目前 WMH 分支中最强的 verified result。
+1. 它是目前 WMH 分支中 task-level regression 最少、最稳的 verified result。
 2. 它直接针对 failure analysis 中暴露出的主要问题：hard atomic tasks 和 first-step failure。
 3. 它显著提升了 `SR@1`，说明模型对单个困难任务的理解和执行能力确实改善。
 4. 它同时提升 `SR@5`，说明这种改善能够传递到 chained evaluation 中。
@@ -159,6 +165,22 @@ hardv2 aug n300:
   SR@5 = 12.0%
 ```
 
+新增 MoE95k+LoRA no-mirror `steps_3000` n300 后，aggregate 最强结果发生了变化：
+
+```text
+hardv2 aug n300:
+  avg_seq_len = 1.847
+  SR@1 = 72.0%
+  SR@5 = 12.0%
+
+MoE95k+LoRA no-mirror steps_3000 n300:
+  avg_seq_len = 1.863
+  SR@1 = 72.0%
+  SR@5 = 12.7%
+```
+
+因此，严格按 aggregate score，MoE95k+LoRA no-mirror 已经略超 hardv2 aug。但 hardv2 aug 的 drawer 和 LED 稳定性更好，MoE95k+LoRA 在 `close_drawer`、`turn_off_lightbulb` 上明显回退，所以本文将 hardv2 aug 定义为 **safest verified main route**，将 MoE95k+LoRA no-mirror 定义为 **current aggregate finalist**。
+
 ### 5.2 Highest-Upside Candidate Route
 
 当前最高潜力候选路线是：
@@ -171,12 +193,19 @@ hardv2 aug n300:
 - LoRA 能提升 representation adaptation，效果优于仅训练 connector；
 - GTY MoE95k 提供了比 plain GR00T branch 更强的 ABC-trained action-head initialization。
 
-但该路线还不能被称为最终主路线，因为它还缺少 D n300 / D n1000 验证。尤其需要确认：
+新增结果说明该路线是有效的，但还不能被称为最终主路线。尤其需要确认：
 
-- 它是否真的超过 hardv2 aug；
+- `steps_7000/8000` 是否继续超过 `steps_3000`，还是出现 overfit / regression；
 - 它是否保留了 MoE 对 light tasks 的优势；
 - 它是否避免了 MoE-Adaptive 中出现的 drawer regression；
 - mirror variant 是否引入 sign/view inconsistency。
+
+当前事实是：
+
+- no-mirror `steps_3000` 在 D n300 上 aggregate 略超 hardv2 aug；
+- mirror `steps_3000` 明显弱于 no-mirror；
+- `steps_5000` n100 的 `avg_seq_len=1.94`、`SR@1=77%`，但 `SR@5=9%`，不能说明 long-chain 一定更好；
+- 最新 `steps_8000` 尚未完成 D n300/n1000，暂不能用于最终结论。
 
 ### 5.3 Not Prioritized Route
 
@@ -202,12 +231,17 @@ hardv2 aug n300:
 | hardv2 aug n300 | 84 | 63 | 65 | 27 | 25 | 36 |
 | LoRA2000 n300 | 108 | 61 | 49 | 27 | 26 | 29 |
 | MoE-Adaptive n300 | 97 | 89 | 57 | 26 | 17 | 14 |
+| GTY MoE95k n300 | 82 | 92 | 54 | 25 | 18 | 29 |
+| MoE95k+LoRA no-mirror steps_3000 n300 | 84 | 72 | 44 | 39 | 23 | 38 |
+| MoE95k+LoRA mirror steps_3000 n300 | 83 | 83 | 49 | 43 | 19 | 23 |
 
 解释：
 
 - `SR@1` 是判断模型是否理解 D 中单个 atomic task 的敏感指标。
 - hardv2 将 `SR@1` 从 `54.0%` 提升到 `72.0%`，说明 hard-task coverage 对提升第一步成功率非常关键。
-- 但 long-horizon robustness 仍未解决。即使 hardv2 aug，也只有 `36/300` 条 sequence 完整完成 5 个任务。
+- MoE95k+LoRA no-mirror 没有继续提高 `SR@1`，但把 completed-all-5 从 hardv2 的 `36/300` 提到 `38/300`，说明提升主要来自中后段条件成功率和部分 motion primitive，而不是更强 first-step grounding。
+- mirror 版本 first-step 与 no-mirror 接近，但 completed-all-5 下降到 `23/300`，说明 mirror 造成的问题主要出现在链式后续执行和任务一致性上。
+- long-horizon robustness 仍未解决。即使当前 aggregate 最强的 MoE95k+LoRA no-mirror，也只有 `38/300` 条 sequence 完整完成 5 个任务。
 
 因此，当前路线的第一优先级不是直接追求复杂 long-horizon reasoning，而是先提升 hard atomic task 的可靠性。只有 `SR@1` 和 per-task success 足够高，后续 long-chain success 才有提升空间。
 
@@ -224,6 +258,22 @@ hardv2 aug n300:
 | Stack/lift/place tasks | 多个分支仍存在 timeout failures | gripper timing、contact sequencing 和闭环纠偏仍较弱 | 暂不把 smoothing 作为主策略，后续考虑 gripper head / history | 分析 rollout video、gripper switch timing 和 predicate distance |
 
 该表说明，当前路线不是简单追求 overall score，而是根据不同 failure group 选择不同实验响应。hardv2 适合作为 verified main route，是因为它对多个主要 failure group 都有稳定收益；MoE 适合作为 candidate，是因为它对部分 motion primitive 有强信号，但也有明显 regression risk。
+
+新增 MoE95k+LoRA n300 进一步强化了这个判断：
+
+| Task | hardv2 aug n300 | GTY MoE95k n300 | MoE95k+LoRA no-mirror steps_3000 n300 | MoE95k+LoRA mirror steps_3000 n300 | 解释 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `open_drawer` | 98.5% | 97.3% | 98.6% | 98.5% | open drawer 基本稳定 |
+| `close_drawer` | 100.0% | 2.4% | 30.0% | 13.5% | MoE 系列严重 drawer regression；LoRA 有修复但远未恢复 hardv2 |
+| `move_slider_left` | 16.3% | 41.7% | 60.5% | 20.0% | no-mirror MoE+LoRA 明显修复 slider-left；mirror 反而退化 |
+| `move_slider_right` | 52.1% | 89.1% | 90.7% | 80.0% | MoE motion primitive 对 slider-right 很强 |
+| `turn_off_lightbulb` | 39.3% | 7.7% | 25.8% | 25.9% | MoE+LoRA 仍低于 hardv2，lightbulb 是 regression gate |
+| `turn_on_lightbulb` | 41.0% | 24.3% | 27.8% | 28.9% | 同上 |
+| `turn_off_led` | 100.0% | 81.2% | 69.4% | 81.6% | no-mirror MoE+LoRA 损失 LED-off |
+| `turn_on_led` | 86.1% | 91.9% | 84.2% | 94.3% | LED-on 保持较好 |
+| `stack_block` | 39.4% | 48.5% | 55.3% | 62.1% | MoE/LoRA 对 stack 类 motion 有收益 |
+
+因此，MoE95k+LoRA 的优势不是“全面更强”，而是把能力从 drawer/LED/lightbulb 的一部分转移到了 slider 和 stack。它的 aggregate 提升来自这些任务收益抵消了部分 regression。下一轮训练或采样应围绕 `close_drawer`、`turn_off_lightbulb`、`turn_on_lightbulb` 和 `turn_off_led` 做 targeted repair。
 
 ### 6.3 Timeout and Near-Miss Pattern
 
@@ -245,8 +295,13 @@ Near-miss 结果也支持这一点：
 | hardv2 aug | 264 | 11.4% | 5.3% |
 | LoRA2000 | 271 | 11.8% | 5.5% |
 | MoE-Adaptive | 286 | 22.0% | 9.1% |
+| GTY MoE95k | 271 | 21.4% | 8.9% |
+| MoE95k+LoRA no-mirror steps_3000 | 262 | 22.5% | 8.0% |
+| MoE95k+LoRA mirror steps_3000 | 277 | 23.5% | 5.1% |
 
 MoE-Adaptive 的 near-miss rate 明显更高，说明它经常对环境产生有效操作，但没有完成被要求的 predicate。这是一个重要信号：MoE 的 motion capacity 可能更强，但 grounding 或 gating 可能偏离目标任务。因此 MoE 不能只凭部分 task 的高成功率直接作为最终路线，需要 per-task verification。
+
+新增 MoE95k 和 MoE95k+LoRA 的 near-miss 也偏高，这与 per-task 观察一致：模型不是完全不动或随机动作，而是经常触发了某些相关环境变化，但没有完成目标 predicate。例如 slider 和 stack 变强的同时，drawer/lightbulb/LED-off 出现回退。这说明下一步更应该做 targeted repair 和 task-conditional gating，而不是简单继续加大训练步数。
 
 ### 6.4 Action-Diagnostic Pattern：Action Noise 不是主瓶颈
 
@@ -258,12 +313,16 @@ MoE-Adaptive 的 near-miss rate 明显更高，说明它经常对环境产生有
 | hardv2 aug | 0.151 | 2.16% | smoothness 与 baseline 接近，但性能显著更好 |
 | LoRA2000 | 0.143 | 1.89% | 略微更平滑，chain success 更好 |
 | MoE-Adaptive | 0.181 | 1.95% | 动作更激进；部分 task 有收益，但 drawer regression 明显 |
+| GTY MoE95k | 0.138 | 1.80% | 动作更平滑，但 aggregate 不如 hardv2；说明 smoothness 不是充分条件 |
+| MoE95k+LoRA no-mirror steps_3000 | 0.148 | 2.02% | jitter 接近 hardv2，但 slider/stack 更强、drawer/lightbulb 更弱 |
+| MoE95k+LoRA mirror steps_3000 | 0.147 | 2.07% | 动作统计与 no-mirror 接近，但 task success 更差，说明问题来自语义/几何一致性而非整体动作噪声 |
 
 关键结论：
 
 - hardv2 aug 与 base8k 的 jitter 非常接近，但 hardv2 的 `avg_seq_len` 和 `SR@5` 明显更高。
 - LoRA 稍微更平滑，但提升幅度小于 hardv2。
 - MoE-Adaptive 的动作更激进，反而在 drawer 上退化。
+- MoE95k+LoRA no-mirror 与 mirror 的 jitter 几乎相同，但 performance 差异明显，进一步说明 mirror 的主要问题不是动作幅度，而是 language/view/action transform 的一致性或任务分布变化。
 
 因此，当前主要瓶颈不是“动作太抖”，而是：
 
@@ -316,9 +375,9 @@ Failure Pattern 直接决定了当前路线选择：
 
 由此形成路线层级：
 
-1. **Verified WMH main route**：hardv2 augmented ABC training。
-2. **Highest-upside candidate**：GTY MoE95k + fresh LoRA + hardv2 ABC data。
-3. **Diagnostic branch**：left/right mirror，仅在 directional task subsets 上验证有效后再考虑使用。
+1. **Safest verified WMH main route**：hardv2 augmented ABC training，per-task regression 最少。
+2. **Current aggregate finalist**：GTY MoE95k + fresh LoRA + hardv2 ABC data，no-mirror `steps_3000` n300 略超 hardv2，但需要修复 drawer/lightbulb。
+3. **Diagnostic branch**：left/right mirror，仅在 directional task subsets 上验证有效后再考虑使用；当前 full D n300 不如 no-mirror。
 4. **Deferred support work**：proprio/state sanity checks、gripper head、auxiliary state/success prediction、short history。
 
 ---
@@ -331,22 +390,22 @@ Failure Pattern 直接决定了当前路线选择：
 
 在合规约束下，本任务不应优先继续 scale frozen-Qwen + GR00T baseline，而应优先采用 failure-driven data/model adaptation。当前最可靠的已验证路线是 hard-task balanced ABC training，并结合 controlled language paraphrase 和 task-aware image augmentation。该路线直接针对 first-step failure 和 hard atomic task failure，并已在 D n300 上显著提升 `avg_seq_len` 和 `SR@5`。
 
-同时，LoRA 和 MoE 具有进一步提升空间，但不应被单独视为最终解法。LoRA 需要与 stronger data route 结合；MoE 需要通过 per-task verification 防止 drawer 等任务退化。当前最高潜力实验是 GTY MoE95k + fresh Qwen LoRA + hardv2 augmented ABC data。
+同时，LoRA 和 MoE 具有进一步提升空间，但不应被单独视为最终解法。LoRA 需要与 stronger data route 结合；MoE 需要通过 per-task verification 防止 drawer 等任务退化。新增结果后，当前最高潜力实验已经有初步正信号：`MoE95k+LoRA no-mirror steps_3000` 在 n300 aggregate 上略超 hardv2 aug，但由于 drawer/lightbulb regression，仍需要 targeted repair 和更大规模 eval 才能升级为最终主路线。
 
 ### 7.2 Immediate Next Steps
 
-1. 完成当前 `MoE95k + LoRA + aug` 和 `MoE95k + LoRA + mirror` 训练。
-2. 对两个 latest checkpoints 跑 CALVIN D n300。
-3. 与以下分支比较：
-   - WMH hardv2 aug n300；
-   - WMH LoRA2000 n300；
-   - GTY MoE95k n100 / n300，如果可用。
-4. 如果其中一个分支超过 hardv2 aug，则继续跑 D n1000。
-5. 保存所有 final configs、logs、checkpoint paths 和 evaluation reports。
+1. 对 no-mirror 和 mirror 的 `steps_8000` 跑 CALVIN D n300，确认继续训练是否收益为正。
+2. 如果 `steps_8000` 不如 `steps_3000`，保留 `steps_3000` 作为 finalist checkpoint，避免盲目选择最新权重。
+3. 对 no-mirror MoE95k+LoRA 做 targeted repair：
+   - 提高 `close_drawer`、`turn_off_lightbulb`、`turn_on_lightbulb`、`turn_off_led` 权重；
+   - 降低或关闭 mirror；
+   - 保持 slider/stack 相关收益。
+4. 对 finalist branch 跑 D n1000，而不是对所有 branch 都跑 n1000。
+5. 保存所有 final configs、logs、checkpoint paths、evaluation reports 和 HF/uploaded checkpoint mapping。
 
 ### 7.3 Near-Term Verification
 
-1. 对 GTY MoE95k 跑可比较的 n300/n1000 evaluation，避免只依赖 n100 结果。
+1. 对 GTY MoE95k 和 MoE95k+LoRA 的 per-task regression 做固定检查，尤其是 `close_drawer`、lightbulb 和 LED-off。
 2. 对 state-aware checkpoints 做 state zero/shuffle eval，验证 proprio 是否真的被使用。
 3. 对 mirror branch 只在 left/right task subsets 上做 targeted evaluation。
 4. 基于 n300 per-task failures 调整 hard-task sampler weights。
@@ -565,10 +624,10 @@ LoRA2000 n300:
 结果：
 
 ```text
-GTY MoE95k n100:
-  avg_seq_len = 1.91
-  SR@1 = 76.0%
-  SR@5 = 12.0%
+GTY MoE95k n300:
+  avg_seq_len = 1.64
+  SR@1 = 72.7%
+  SR@5 = 9.7%
 
 WMH MoE-Adaptive n300:
   avg_seq_len = 1.397
@@ -580,7 +639,8 @@ WMH MoE-Adaptive n300:
 
 - MoE architecture 有信号，但 adaptive branch 不稳定且存在 task bias。
 - MoE-Adaptive 提升 lightbulb tasks，但严重伤害 drawer。
-- GTY MoE95k 有潜力，但需要 n300/n1000 公平对比。
+- GTY MoE95k 在 n300 上确认强于 base8k，但不如 hardv2 aug。
+- GTY MoE95k 的主要问题同样是 `close_drawer`、lightbulb tasks 偏弱，说明 MoE head 的 motion capacity 不能替代 task-level data repair。
 
 ### 8.10 Current MoE95k + Fresh LoRA + Augmented ABC Training
 
@@ -605,15 +665,49 @@ SAVE_INTERVAL = 1000
 
 当前状态：
 
-- 两个分支训练正常。
-- 已经至少产生 `steps_3000_pytorch_model.pt`。
-- 尚未进行 D evaluation。
+- 两个分支训练正常，并已经继续产生 `steps_8000_pytorch_model.pt`。
+- 已完成 `steps_3000` 的 D n300 evaluation。
+- 已完成 `steps_5000` 的 D n100 evaluation。
+- `steps_7000/8000` 尚未完成 D n300/n1000，因此不能仅凭“最新”选择 checkpoint。
+
+结果：
+
+```text
+no mirror, steps_3000, D n300:
+  avg_seq_len = 1.863
+  SR@1 = 72.0%
+  SR@5 = 12.7%
+
+mirror, steps_3000, D n300:
+  avg_seq_len = 1.670
+  SR@1 = 72.3%
+  SR@5 = 7.7%
+
+no mirror, steps_5000, D n100:
+  avg_seq_len = 1.940
+  SR@1 = 77.0%
+  SR@5 = 9.0%
+
+mirror, steps_5000, D n100:
+  avg_seq_len = 1.740
+  SR@1 = 72.0%
+  SR@5 = 10.0%
+```
+
+分析：
+
+- no-mirror 明显优于 mirror，是后续默认方向。
+- `steps_3000` n300 已经略超 hardv2 aug，是当前 aggregate finalist。
+- `steps_5000` n100 的 `avg_seq_len` 更高，但 `SR@5` 低于 `steps_3000` n300；由于样本量不同，不能直接判定 `steps_5000` 更好。
+- MoE95k+LoRA 的收益集中在 slider 和 stack；回退集中在 drawer/lightbulb/LED-off。
+- 后续应优先对 no-mirror 做 targeted repair，而不是继续扩大 mirror。
 
 必须做的 evaluation：
 
-- no mirror latest checkpoint，D n300；
-- mirror latest checkpoint，D n300；
-- 如果某个分支超过 hardv2 aug，则继续 D n1000。
+- no-mirror `steps_8000`，D n300；
+- mirror `steps_8000`，D n300；
+- 如果 `steps_8000` 或 `steps_3000` 稳定超过 hardv2 aug，则对 finalist 跑 D n1000；
+- 对 drawer/lightbulb/LED-off 做 regression-focused subset analysis。
 
 ---
 
@@ -637,6 +731,32 @@ hardv2 aug n300:
   SR@5 = 12.0%
 ```
 
+新增 MoE95k+LoRA no-mirror 结果在 aggregate 上略超 hardv2 aug：
+
+```text
+MoE95k+LoRA no-mirror steps_3000 n300:
+  avg_seq_len = 1.86
+  SR@5 = 12.7%
+```
+
+但它不能简单替代 hardv2 aug，因为 per-task 分析显示：
+
+```text
+close_drawer:
+  hardv2 aug = 100.0%
+  MoE95k+LoRA no-mirror = 30.0%
+
+move_slider_left:
+  hardv2 aug = 16.3%
+  MoE95k+LoRA no-mirror = 60.5%
+
+stack_block:
+  hardv2 aug = 39.4%
+  MoE95k+LoRA no-mirror = 55.3%
+```
+
+这说明 MoE95k+LoRA 的提升来自 motion primitive 分布变化，而不是所有 hard tasks 都改善。它是当前 aggregate finalist，但需要 targeted repair 后再作为最终路线。
+
 LoRA 也有效，但不是最佳 standalone route：
 
 ```text
@@ -645,11 +765,10 @@ LoRA2000 n300:
   SR@5 = 9.7%
 ```
 
-MoE action head 有潜力，尤其是 GTY MoE95k，但必须用 per-task metrics 判断，因为 MoE-Adaptive 虽然显著提升 light tasks，却严重退化 drawer tasks。
+MoE action head 有潜力，尤其是与 LoRA 和 hardv2 data 组合后。但必须用 per-task metrics 判断，因为 MoE-Adaptive 和 GTY MoE95k 都暴露过 drawer/lightbulb regression。
 
-当前 highest-upside candidate 是：
+当前 highest-upside candidate / finalist 是：
 
 **GTY MoE95k + WMH hard-task augmented ABC data + fresh Qwen LoRA**，并分别测试 mirror / non-mirror 两个版本。
 
-该路线只有在 D n300/n1000 验证其超过 hardv2 aug，且没有引入新的 task regression 后，才能升级为最终主路线。
-
+该路线的 no-mirror `steps_3000` 已经在 D n300 aggregate 上略超 hardv2 aug，但只有在 `steps_8000` 或 repaired continuation 通过 D n300/n1000，并且修复 drawer/lightbulb regression 后，才能升级为最终主路线。

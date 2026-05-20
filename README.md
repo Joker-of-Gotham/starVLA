@@ -2,11 +2,15 @@
 
 这是 WMH 在 StarVLA 上针对 CALVIN ABC -> D 的实验分支。训练只使用 CALVIN ABC，CALVIN D 只用于 closed-loop evaluation；不使用任何上游 action-trained checkpoints。
 
-详细文档、脚本说明、failure analysis、mirror augmentation 分析和 checkpoint 评测说明见：
+## 重点阅读
 
-```text
-examples/calvin_autoresearch/README.md
-```
+完整路线选择、failure pattern、各分支结果和后续实验优先级见：
+
+**[CALVIN ABC -> D 技术路线选择论证与 Failure Pattern 分析报告](examples/calvin_autoresearch/docs/calvin_abc_d_技术路线与failure分析报告_中文整理版.md)**
+
+详细文档、脚本说明、mirror augmentation 分析、checkpoint 下载和 public 测评说明见：
+
+**[WMH CALVIN AutoResearch 详细 README](examples/calvin_autoresearch/README.md)**
 
 在线查看时请切到 GitHub 的 `WMH` 分支：
 

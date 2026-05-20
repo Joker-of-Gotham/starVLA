@@ -2,11 +2,11 @@
 
 本目录记录 WMH 在 StarVLA / CALVIN ABC -> D 任务上的完整探索：训练只使用 CALVIN ABC，CALVIN D 只用于 closed-loop evaluation；不使用任何上游 action-trained checkpoints。这里同时包含代码改动、训练脚本、评测脚本、公开 checkpoint 评测入口、failure analysis 和 mirror augmentation 诊断材料。
 
-更完整的路线论证见：
+## 重点阅读
 
-```text
-examples/calvin_autoresearch/docs/calvin_abc_d_技术路线与failure分析报告_中文整理版.md
-```
+完整路线选择、failure pattern、各分支结果和后续实验优先级见：
+
+**[CALVIN ABC -> D 技术路线选择论证与 Failure Pattern 分析报告](docs/calvin_abc_d_技术路线与failure分析报告_中文整理版.md)**
 
 ## 1. 总览
 
