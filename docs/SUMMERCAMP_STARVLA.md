@@ -1,6 +1,6 @@
 # StarVLA SII SummerCamp 使用与维护说明
 
-本文档面向本分支的训练、后训练、评估、ensemble 和仓库维护。顶层 README 保留上游 StarVLA 项目介绍；本文件解释当前分支新增的工程化能力、目录规范和推荐操作方式。赛题总结和答辩材料底稿见 [SUMMERCAMP_REPORT.md](SUMMERCAMP_REPORT.md)。
+本文档面向本分支的训练、后训练、评估、ensemble 和仓库维护。顶层 README 保留上游 StarVLA 项目介绍；本文件解释当前分支新增的工程化能力、目录规范和推荐操作方式。技术路线和失败模式分析见 [TECHNICAL_REPORT.md](TECHNICAL_REPORT.md)，CALVIN ABC→D 完整测评表见 [CALVIN_EVALUATION_REPORT.md](CALVIN_EVALUATION_REPORT.md)，总入口见 [SUMMERCAMP_REPORT.md](SUMMERCAMP_REPORT.md)。
 
 ## 0. 从离线环境到正式评测的端到端路线
 
