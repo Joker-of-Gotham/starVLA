@@ -13,7 +13,9 @@ bash interaction/bin/starvla-interact.sh
 For the Chinese end-to-end operation manual, including offline environment
 installation, data/model placement, every interactive menu option, training,
 resume, post-training, ensemble, and evaluation choices, read
-[`docs/SUMMERCAMP_STARVLA.md`](../docs/SUMMERCAMP_STARVLA.md).
+[`docs/SUMMERCAMP_STARVLA.md`](../docs/SUMMERCAMP_STARVLA.md). The full
+Training Policy `T01-T28` and Structure Policy `S01-S32` tables are in
+[`docs/POLICY_MATRIX.md`](../docs/POLICY_MATRIX.md).
 
 Useful non-interactive commands:
 

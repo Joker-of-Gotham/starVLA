@@ -468,6 +468,8 @@ bash interaction/bin/starvla-interact.sh train \
 datasets -> training policy -> base model -> action expert -> structure policy
 ```
 
+完整的 Training Policy 表 1 和 Structure Policy 表 2 已整理到 [POLICY_MATRIX.md](POLICY_MATRIX.md)。该矩阵是交互式输入的规范解释：`Txx` 说明训练阶段、训练哪些参数、loss/采样/后训练策略；`Sxx` 说明结构放在哪里、改哪个模块、与 action expert 的关系。日常使用可以先看本节的组合规则，遇到不确定的 policy 再查完整矩阵。
+
 组合示例：
 
 ```bash
@@ -488,6 +490,16 @@ bash interaction/bin/starvla-interact.sh train \
 - 当前支持 28 个 Training Policy：`T01` 到 `T28`。
 - 当前支持 32 个 Structure Policy：`S01` 到 `S32`。
 - 当前 action expert catalog 包含抽象 expert 和具体 framework：`PI`、`OFT`、`GR00T`、`FAST`、`Adapter`、`Dual`、`ABot_M0`、`LangForce`、`QwenPI`、`QwenFM`、`QwenPI_v3`、`QwenOFT`、`QwenGR00T`、`QwenFast`、`QwenAdapter`、`QwenDual`、`Gemma4PI`、`Gemma4GR00T`、`WanPI`、`WanOFT`、`WanGR00T`、`CosmoPredict2PI`、`CosmoPredict2OFT`、`CosmoPredict2GR00T`、`CosmosGR00T`、`InternVLA-M1`。
+
+完整矩阵的使用规则：
+
+- 从头训练先固定 `T01 T02 T07` 和 `S01 S04 S27`，再按 action expert 添加专用策略。
+- OFT 路线补 `T06 T11 T22` 和 `S07 S15`。
+- FAST/action-token 路线补 `T04 T05 T11 T22` 和 `S02 S08 S15`，base model 优先选带 `_action` 的版本。
+- PI/GR00T flow 路线补 `T08 T11 T22` 和 `S10 S11 S15`。
+- 世界模型/未来表征路线补 `T15 T16 T23` 和 `S20 S21 S22 S31`，适合 `cosmos_predict2` 或 `CosmoPredict2*`。
+- 后训练另开新 run，使用 `--posttrain-from`，通常选 `T20 T21 T24 T27 T28` 和 `S26 S27 S28 S30`。
+- `launch-supported` 表示已有原生入口或原生 framework/head；`runtime-supported` 表示通过共享 trainer runtime hook、metadata、regularizer、loss weight、deployment metadata 或后训练流程落地，能随 checkpoint 续训或后训练运行。
 
 ## 8. 后训练
 
