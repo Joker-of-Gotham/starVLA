@@ -315,9 +315,73 @@ CALVIN_SEND_STATE=1 \
 bash examples/calvin_autoresearch/scripts/run_eval_abc_to_d_parallel_auto.sh
 ```
 
-## 8. 组员如何评测
+## 8. Public 快速测评指南
 
-组员只需要能访问 `public/seven`，并把 `MEMBER` 改成自己的名字，输出会写到自己的 public member 目录。
+如果你只能访问公共区 `/public/seven`，不需要访问 WMH 私有工作区，也可以直接评测 WMH checkpoint。
+
+公共 checkpoint 选择目录：
+
+```text
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/checkpoints
+```
+
+当前默认 checkpoint：
+
+```text
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/checkpoints/latest_latest_pytorch_model.pt
+```
+
+查看可选 checkpoint：
+
+```bash
+PUBLIC=/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin
+ls -lh ${PUBLIC}/members/WMH/checkpoints
+readlink -f ${PUBLIC}/members/WMH/checkpoints/latest_latest_pytorch_model.pt
+```
+
+### 8.1 只用 public/seven 跑 D n300
+
+把 `MEMBER=YOUR_NAME` 改成自己的名字，输出会写到自己的 public member 目录：
+
+```bash
+export PUBLIC=/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin
+source ${PUBLIC}/shared/runtime/starvla_env.sh
+
+export STARVLA_ROOT=${PUBLIC}/members/WMH/code/latest_starVLA_moe_lora
+export PYTHONPATH=${STARVLA_ROOT}:${PYTHONPATH:-}
+cd ${STARVLA_ROOT}
+
+MEMBER=YOUR_NAME
+CKPT=${PUBLIC}/members/WMH/checkpoints/latest_latest_pytorch_model.pt
+RUN_ID=eval_wmh_public_d_n300_$(date +%m%d_%H%M%S)
+OUT=${PUBLIC}/members/${MEMBER}/reports/${RUN_ID}
+LOG=${PUBLIC}/members/${MEMBER}/logs/${RUN_ID}.log
+mkdir -p "$(dirname "${LOG}")" "${OUT}"
+
+CKPT=${CKPT} \
+EVAL_LOG_DIR=${OUT} \
+TOTAL_SEQUENCES=300 \
+GPU_IDS=0,1,2,3 \
+WORKERS_PER_GPU=1 \
+BASE_PORT=7400 \
+CALVIN_SEND_STATE=1 \
+bash examples/calvin_autoresearch/scripts/run_eval_abc_to_d_parallel_auto.sh > "${LOG}" 2>&1
+
+${STARVLA_PYTHON} examples/calvin_autoresearch/scripts/summarize_eval_metrics.py "${OUT}/metrics.json"
+```
+
+建议先用 `WORKERS_PER_GPU=1`，稳定后再尝试 `WORKERS_PER_GPU=2`。如果节点很忙，`WORKERS_PER_GPU=2` 可能导致 worker 被 kill。
+
+输出位置：
+
+```text
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/$MEMBER/reports/
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/$MEMBER/logs/
+```
+
+### 8.2 用私有工作区 wrapper 比较多个候选
+
+如果你能访问 WMH 私有工作区，也可以用 wrapper 一次评测多个候选：
 
 ```bash
 cd /inspire/qb-ilm2/project/26summer-camp-10/26220172/WMH/starVLA
@@ -331,15 +395,6 @@ WORKERS_PER_GPU=1 \
 BASE_PORT=7400 \
 bash examples/calvin_autoresearch/scripts/run_public_wmh_best_eval.sh
 ```
-
-输出位置：
-
-```text
-/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/$MEMBER/reports/
-/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/$MEMBER/logs/
-```
-
-建议先用 `WORKERS_PER_GPU=1`，稳定后再尝试 `WORKERS_PER_GPU=2`。
 
 ## 9. 常用入口
 
