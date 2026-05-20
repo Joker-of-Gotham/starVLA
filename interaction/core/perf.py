@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,7 @@ from .paths import CONFIG_ROOT, DEFAULT_ACCELERATE_CONFIG
 
 
 H200_ACCELERATE_CONFIG = CONFIG_ROOT / "accelerate_h200_zero2.yaml"
+DEFAULT_PREFLIGHT_MIN_FREE_GB = 32
 
 
 @dataclass(frozen=True)
@@ -146,7 +148,9 @@ def perf_preflight(selected_gpus: list[int], settings: PerfSettings) -> list[lis
     gpus = detect_gpus()
     selected = [gpu for gpu in gpus if gpu.index in set(selected_gpus)] if selected_gpus else []
     h200_count = sum(1 for gpu in selected if gpu.is_h200)
-    low_free = [gpu.index for gpu in selected if gpu.memory_free_mb < 120_000]
+    min_free_mb = _preflight_min_free_mb()
+    require_exclusive = _env_flag("STARVLA_REQUIRE_EXCLUSIVE_GPU")
+    low_free = [gpu.index for gpu in selected if gpu.memory_free_mb < min_free_mb]
     busy = [gpu.index for gpu in selected if gpu.util_percent > 10]
     selected_set = set(selected_gpus)
     compute_processes = [
@@ -154,12 +158,33 @@ def perf_preflight(selected_gpus: list[int], settings: PerfSettings) -> list[lis
         for proc in detect_compute_processes()
         if proc.gpu_index in selected_set or (not selected_set and proc.gpu_index is not None)
     ]
+    free_detail = _memory_detail(selected, min_free_mb, low_free)
     compute_detail = "; ".join(
         f"gpu{proc.gpu_index}:pid{proc.pid}:{proc.used_memory_mb}MB:{Path(proc.process_name).name}"
         for proc in compute_processes[:12]
     )
     if len(compute_processes) > 12:
         compute_detail += f"; +{len(compute_processes) - 12} more"
+    if compute_processes:
+        compute_status: bool | str = False if require_exclusive else "warn"
+        compute_detail = (
+            compute_detail
+            + (
+                "; exclusive GPU required by STARVLA_REQUIRE_EXCLUSIVE_GPU=1"
+                if require_exclusive
+                else "; existing processes are allowed because exclusive GPU mode is off"
+            )
+        )
+    else:
+        compute_status = True
+        compute_detail = "no existing CUDA compute processes on selected GPUs"
+    busy_status: bool | str
+    if busy and require_exclusive:
+        busy_status = False
+    elif busy:
+        busy_status = "warn"
+    else:
+        busy_status = True
     power_limited = [
         gpu.index
         for gpu in selected
@@ -176,15 +201,50 @@ def perf_preflight(selected_gpus: list[int], settings: PerfSettings) -> list[lis
         ["accelerate_config", settings.accelerate_config.exists(), str(settings.accelerate_config)],
         ["selected_gpus", len(selected_gpus), ",".join(map(str, selected_gpus)) or "-"],
         ["selected_h200", h200_count, "all selected GPUs should be H200 for the H200 profile"],
-        ["free_memory_check", not low_free, f"GPUs below 120GB free before launch: {low_free or '-'}"],
-        ["compute_process_check", not compute_processes, compute_detail or "no existing CUDA compute processes on selected GPUs"],
-        ["prelaunch_gpu_busy", not busy, f"GPUs above 10% util before launch: {busy or '-'}"],
+        ["free_memory_check", not low_free, free_detail],
+        ["compute_process_check", compute_status, compute_detail],
+        ["prelaunch_gpu_busy", busy_status, f"GPUs above 10% util before launch: {busy or '-'}"],
         ["prelaunch_power_idle", True, f"low power before launch is normal if idle: {power_limited or '-'}"],
         ["topology_visible", topo_ok, "NVLink present" if _topology_has_nvlink(topo_text) else "NVLink not detected in nvidia-smi topo"],
         ["all_reduce_perf", has_all_reduce, "available" if has_all_reduce else "install/build NVIDIA nccl-tests for bandwidth validation"],
         ["p2pBandwidthLatencyTest", True, "available" if has_p2p else "optional CUDA sample not found; all_reduce_perf remains the required bandwidth smoke test"],
         ["nvbandwidth", True, "available" if has_nvbandwidth else "optional NVIDIA nvbandwidth not found; install it only for deeper memory/interconnect benchmarking"],
     ]
+
+
+def _memory_detail(selected: list[GPUInfo], min_free_mb: int, low_free: list[int]) -> str:
+    selected_detail = ", ".join(
+        f"gpu{gpu.index}:{gpu.memory_free_mb / 1024:.1f}GiB free/{gpu.memory_used_mb / 1024:.1f}GiB used"
+        for gpu in selected
+    )
+    threshold = f"{min_free_mb / 1024:.1f}GiB"
+    if low_free:
+        return (
+            f"minimum free threshold is {threshold}; GPUs below threshold: {low_free}; "
+            f"selected memory: {selected_detail or '-'}; override with STARVLA_PREFLIGHT_MIN_FREE_GB"
+        )
+    return (
+        f"minimum free threshold is {threshold}; selected memory: {selected_detail or '-'}; "
+        "override with STARVLA_PREFLIGHT_MIN_FREE_GB"
+    )
+
+
+def _preflight_min_free_mb() -> int:
+    raw = os.environ.get("STARVLA_PREFLIGHT_MIN_FREE_GB")
+    if raw is None or not raw.strip():
+        return DEFAULT_PREFLIGHT_MIN_FREE_GB * 1024
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_PREFLIGHT_MIN_FREE_GB * 1024
+    if value <= 0:
+        return 0
+    return int(value * 1024)
+
+
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name, "")
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _base_env(nccl_debug: str) -> dict[str, str]:
@@ -204,7 +264,7 @@ def _base_env(nccl_debug: str) -> dict[str, str]:
 def _resolve_profile(profile: str, selected_gpus: list[int], h200_count: int, has_nvlink: bool) -> str:
     if profile != "auto":
         return profile
-    if len(selected_gpus) >= 8 and h200_count >= 8:
+    if selected_gpus and h200_count == len(selected_gpus):
         return "h200_8gpu"
     if has_nvlink and len(selected_gpus) >= 4:
         return "balanced"

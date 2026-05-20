@@ -20,6 +20,7 @@ Key difference from VLM wrappers:
     that does not depend on VLM-specific naming conventions.
 """
 
+import inspect
 from typing import Optional
 
 import torch
@@ -80,9 +81,18 @@ class _CosmoPredict2_Interface(nn.Module):
         self.vae = AutoencoderKLWan.from_pretrained(
             model_name, subfolder="vae", torch_dtype=torch.bfloat16
         )
-        self.scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            model_name, subfolder="scheduler"
-        )
+        scheduler_config = FlowMatchEulerDiscreteScheduler.load_config(model_name, subfolder="scheduler")
+        valid_scheduler_keys = set(inspect.signature(FlowMatchEulerDiscreteScheduler.__init__).parameters) - {"self"}
+        filtered_scheduler_config = {
+            key: value for key, value in dict(scheduler_config).items() if key in valid_scheduler_keys
+        }
+        ignored_scheduler_keys = sorted(set(dict(scheduler_config)) - set(filtered_scheduler_config))
+        if ignored_scheduler_keys:
+            logger.info(
+                "Ignoring FlowMatchEulerDiscreteScheduler config keys unsupported by this diffusers version: %s",
+                ignored_scheduler_keys,
+            )
+        self.scheduler = FlowMatchEulerDiscreteScheduler.from_config(filtered_scheduler_config)
 
         # Use diffusers' VideoProcessor for image/video preprocessing (resize, normalize, etc.)
         from diffusers.video_processor import VideoProcessor

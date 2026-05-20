@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+import os
 import time
 import traceback
 
@@ -27,14 +28,18 @@ class WebsocketPolicyServer:
         port: int = 10093,
         idle_timeout: int = -1,  # Idle timeout in seconds, -1 means never auto-close
         metadata: dict | None = None,
+        max_concurrency: int | None = None,
     ) -> None:
         self._policy = policy  #
         self._host = host
         self._port = port
         self._metadata = metadata or {}
         self._idle_timeout = idle_timeout
+        self._max_concurrency = max(1, int(max_concurrency or os.getenv("STARVLA_SERVER_INFERENCE_CONCURRENCY", "1")))
+        self._semaphore = asyncio.Semaphore(self._max_concurrency)
         self._last_active = time.time()
         logging.getLogger("websockets.server").setLevel(logging.INFO)
+        logging.info("WebsocketPolicyServer max_concurrency=%s", self._max_concurrency)
 
     def serve_forever(self) -> None:
         asyncio.run(self.run())
@@ -72,7 +77,11 @@ class WebsocketPolicyServer:
             try:
                 msg = msgpack_numpy.unpackb(await websocket.recv())
                 self._last_active = time.time()  # Refresh active time on each received message
-                ret = self._route_message(msg)  # route message
+                async with self._semaphore:
+                    if self._max_concurrency > 1:
+                        ret = await asyncio.to_thread(self._route_message, msg)
+                    else:
+                        ret = self._route_message(msg)  # route message
                 await websocket.send(packer.pack(ret))
             except websockets.ConnectionClosed:
                 logging.info(f"Connection from {websocket.remote_address} closed")

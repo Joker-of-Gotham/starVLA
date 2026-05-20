@@ -167,12 +167,16 @@ def _confirm_eval_launch(meta: dict[str, Any], commands: dict[str, str], yes: bo
         ["ports", meta.get("ports")],
         ["server_gpu", meta.get("server_gpu")],
         ["server_gpus_resolved", meta.get("server_gpus_resolved")],
+        ["policy_server_count", meta.get("policy_server_count")],
+        ["server_gpu_assignment", meta.get("server_gpu_assignment")],
         ["worker_gpu_assignment", meta.get("worker_gpu_assignment")],
         ["client_gpu", meta.get("client_gpu")],
         ["start_client", meta.get("start_client")],
         ["eval_throughput_profile", meta.get("eval_throughput_profile")],
         ["parallel_workers", meta.get("parallel_workers")],
         ["replicas_per_gpu", meta.get("replicas_per_gpu")],
+        ["clients_per_server", meta.get("clients_per_server")],
+        ["server_concurrency", meta.get("server_concurrency")],
         ["num_sequences", meta.get("num_sequences") or meta.get("trials")],
         ["max_steps_per_task", meta.get("max_steps_per_task")],
         ["session", meta.get("tmux_session")],
@@ -700,16 +704,17 @@ def command_train(args: argparse.Namespace) -> int:
         env_overrides=args.nccl_env or [],
     )
     raw_perf_rows = perf_preflight(spec.gpus, perf_settings)
-    perf_rows = [[name, status_markup(status) if isinstance(status, bool) else status, detail] for name, status, detail in raw_perf_rows]
+    perf_rows = [[name, status_markup(status) if isinstance(status, (bool, str)) else status, detail] for name, status, detail in raw_perf_rows]
     print_table("Performance Preflight", ["check", "status", "detail"], perf_rows)
     hard_perf_blockers = {
         "free_memory_check",
         "compute_process_check",
+        "prelaunch_gpu_busy",
     }
     failed_perf = [row for row in raw_perf_rows if row[0] in hard_perf_blockers and row[1] is False]
     if failed_perf:
-        cprint("[red]Performance preflight failed.[/red] Selected GPU(s) are already occupied or do not have enough free memory.")
-        cprint("Stop the existing job, choose different GPUs, or use `bash interaction/bin/starvla-force-stop.sh <session>` for managed StarVLA sessions.")
+        cprint("[red]Performance preflight failed.[/red] Selected GPU(s) do not meet the minimum free-memory threshold.")
+        cprint("Choose different GPUs, lower STARVLA_PREFLIGHT_MIN_FREE_GB, or free memory before launching.")
         return 4
     if not tmux_available():
         cprint("[red]tmux is required for managed launches but is not available.[/red]")
@@ -766,6 +771,8 @@ def command_eval(args: argparse.Namespace) -> int:
         max_steps_per_task=args.max_steps_per_task,
         parallel_workers=args.parallel_workers,
         replicas_per_gpu=args.replicas_per_gpu,
+        clients_per_server=args.clients_per_server,
+        server_concurrency=args.server_concurrency,
         eval_throughput_profile=args.eval_throughput_profile,
         calvin_render_backend=args.calvin_render_backend,
         dataset_path=args.dataset_path,
@@ -773,6 +780,15 @@ def command_eval(args: argparse.Namespace) -> int:
         extra_args=args.extra or [],
     )
     commands, meta = build_eval_commands(spec)
+    if args.preset == "calvin" and args.parallel_workers and not getattr(args, "allow_many_workers", False):
+        recommended_workers = int(meta.get("recommended_workers") or meta.get("parallel_workers") or 1)
+        if int(args.parallel_workers) > recommended_workers:
+            cprint(
+                f"[red]Refusing CALVIN eval workers={args.parallel_workers} above the current safe recommendation={recommended_workers}.[/red]\n"
+                "Extra workers add simulator load and can oversubscribe shared policy servers. "
+                "Use --eval-throughput-profile h200_saturated or --allow-many-workers only after checking GPU memory, CPU, ports, and disk space."
+            )
+            return 2
     session = sanitize_session(args.session or f"starvla_eval_{Path(args.ckpt).stem}")
     meta["tmux_session"] = session
 
@@ -844,6 +860,11 @@ def command_list(args: argparse.Namespace) -> int:
     rows = []
     for job in iter_jobs():
         latest = job.get("latest", {})
+        progress = latest.get("progress") or {}
+        current = latest.get("step")
+        if current is None:
+            current = progress.get("current")
+        total = latest.get("max_steps") or progress.get("total") or "-"
         metrics = latest.get("metrics") or {}
         loss_keys = [key for key in metrics if "loss" in key.lower() or key == "mse_score"]
         loss_text = " ".join(f"{_metric_label(key)}={compact_value(metrics[key])}" for key in loss_keys[:3])
@@ -854,7 +875,7 @@ def command_list(args: argparse.Namespace) -> int:
             [
                 Path(job.get("job_dir", "")).name,
                 f"{job.get('kind', '-')} {status_markup('alive' if job.get('session_alive') else 'stopped')}",
-                f"step={latest.get('step')}/{latest.get('max_steps') or '-'} ep={latest.get('epoch')} event={(job.get('latest_event') or {}).get('event', '-')}",
+                f"step={current}/{total} ep={latest.get('epoch')} event={(job.get('latest_event') or {}).get('event', '-')}",
                 f"{status_markup(severity)} {issue.get('code', '-')}",
                 loss_text or "-",
             ]
@@ -898,6 +919,88 @@ def command_paths(args: argparse.Namespace) -> int:
             ["tmux logs/events", f"{roots['active_runs_root']}/<timestamp>_<job>/"],
             ["H200 accelerate profile", "interaction/config/accelerate_h200_zero2.yaml"],
             ["H200 DeepSpeed profile", "interaction/config/ds_h200_zero2.json"],
+        ],
+    )
+    return 0
+
+
+def command_ensemble(args: argparse.Namespace) -> int:
+    try:
+        from interaction.core.ensemble import build_weight_soup, inspect_members, parse_weights, recipe_checkpoints
+    except ModuleNotFoundError as exc:
+        cprint(f"[red]Ensemble dependencies are missing:[/red] {exc}")
+        cprint("Activate the StarVLA environment before building model soups, for example: source env/starvla-py310/bin/activate")
+        return 2
+
+    try:
+        recipe_ckpts, recipe_weights = recipe_checkpoints(args.recipe)
+        ckpts = list(args.ckpt or recipe_ckpts)
+        if not ckpts:
+            cprint("[red]No ensemble checkpoints were provided.[/red] Use --ckpt or --recipe calvin_ultimate_moe.")
+            return 2
+        default_weights = None if args.method == "uniform_soup" or args.ckpt else recipe_weights
+        weights = parse_weights(args.weights, len(ckpts), default_weights)
+        if args.method == "uniform_soup" and not args.weights:
+            weights = parse_weights(None, len(ckpts), None)
+        members = inspect_members(ckpts, weights)
+    except Exception as exc:
+        cprint(f"[red]Ensemble preflight failed:[/red] {exc}")
+        return 2
+
+    rows = [
+        [
+            i,
+            f"{member.weight:.4f}",
+            member.num_keys,
+            f"{member.file_size / (1024 ** 3):.1f}GiB",
+            member.path,
+        ]
+        for i, member in enumerate(members)
+    ]
+    print_table("Ensemble Members", ["#", "weight", "keys", "size", "checkpoint"], rows)
+
+    if args.inspect:
+        return 0
+
+    run_id = args.run_id or f"{args.recipe or 'custom'}_{time.strftime('%Y%m%d_%H%M%S', time.gmtime())}"
+    output_dir = Path(args.output_dir) if args.output_dir else DEFAULT_CHECKPOINT_ROOT / "ensembles" / run_id
+    confirm_rows = [
+        ["method", args.method],
+        ["recipe", args.recipe or "-"],
+        ["members", len(members)],
+        ["reference_index", args.reference_index],
+        ["output_dir", output_dir],
+        ["output_checkpoint", output_dir / "checkpoints" / "steps_ensemble_pytorch_model.pt"],
+        ["strict", args.strict],
+        ["overwrite", args.overwrite],
+    ]
+    if not _interactive_confirm("Confirm Ensemble Build", confirm_rows, yes=args.yes):
+        cprint("Ensemble cancelled.")
+        return 130
+
+    try:
+        result = build_weight_soup(
+            ckpt_paths=[str(member.path) for member in members],
+            weights=[member.weight for member in members],
+            output_dir=output_dir,
+            reference_index=args.reference_index,
+            strict=args.strict,
+            overwrite=args.overwrite,
+            method=args.method,
+        )
+    except Exception as exc:
+        cprint(f"[red]Ensemble build failed:[/red] {exc}")
+        return 1
+
+    print_table(
+        "Ensemble Output",
+        ["item", "value"],
+        [
+            ["checkpoint", result["checkpoint"]],
+            ["output_dir", result["output_dir"]],
+            ["num_members", result["num_members"]],
+            ["num_keys", result["num_keys"]],
+            ["weights", ",".join(f"{w:.4f}" for w in result["weights"])],
         ],
     )
     return 0
@@ -1223,13 +1326,14 @@ def command_menu(args: argparse.Namespace) -> int:
     while True:
         choice = _ask_choice(
             "StarVLA interaction",
-            ["check", "catalog", "perf_check", "paths", "selftest", "launch_train", "launch_eval", "list", "monitor", "attach", "stop", "exit"],
+            ["check", "catalog", "perf_check", "paths", "selftest", "ensemble", "launch_train", "launch_eval", "list", "monitor", "attach", "stop", "exit"],
             {
                 "check": "environment, paths, imports, action heads",
                 "catalog": "datasets, base models, action experts, training/structure policies",
                 "perf_check": "GPU topology, NCCL profile, bandwidth-test readiness",
                 "paths": "show checkpoint and interaction run save locations",
                 "selftest": "real tmux CPU-only orchestration test",
+                "ensemble": "build a checkpoint soup before eval or post-training",
                 "launch_train": "start a tmux-managed training job",
                 "launch_eval": "start a tmux-managed websocket evaluation",
                 "list": "show managed jobs",
@@ -1267,6 +1371,48 @@ def command_menu(args: argparse.Namespace) -> int:
             command_paths(argparse.Namespace())
         elif choice == "selftest":
             command_selftest(argparse.Namespace(session=None, steps=3, sleep=0.2, timeout=30, show_log=True, single_window=False))
+        elif choice == "ensemble":
+            recipe = _ask_choice(
+                "Ensemble Recipe",
+                ["calvin_ultimate_moe", "custom"],
+                {
+                    "calvin_ultimate_moe": "GTY 60k + GTY posttrain 95k + WMH adaptive 15k checkpoint/final weighted soup",
+                    "custom": "enter checkpoint paths and weights manually",
+                },
+            )
+            ckpts = None
+            weights = None
+            if recipe == "custom":
+                raw_ckpts = input("Checkpoint paths separated by comma/space: ").strip()
+                ckpts = split_multi_values([raw_ckpts])
+                weights = normalize_run_id(input("Weights comma/space list [uniform]: ").strip())
+                recipe = None
+            method = _ask_choice(
+                "Ensemble Method",
+                ["weighted_soup", "uniform_soup"],
+                {
+                    "weighted_soup": "weighted checkpoint averaging; recipe uses evidence-weighted defaults",
+                    "uniform_soup": "simple arithmetic average of compatible checkpoints",
+                },
+            )
+            output_dir = normalize_run_id(input("Output directory [default checkpoint_root/ensembles/<run_id>]: ").strip())
+            reference_index = _ask_optional_int("Reference config member index [0]: ", name="reference index", min_value=0) or 0
+            inspect_only = input("Inspect only? [no]: ").strip().lower() in {"y", "yes", "1", "true"}
+            command_ensemble(
+                argparse.Namespace(
+                    recipe=recipe,
+                    ckpt=ckpts,
+                    weights=weights,
+                    method=method,
+                    output_dir=output_dir,
+                    run_id=None,
+                    reference_index=reference_index,
+                    strict=True,
+                    overwrite=False,
+                    inspect=inspect_only,
+                    yes=False,
+                )
+            )
         elif choice == "list":
             command_list(argparse.Namespace())
         elif choice == "monitor":
@@ -1370,9 +1516,8 @@ def command_menu(args: argparse.Namespace) -> int:
             _rich_panel(
                 "Throughput Inputs",
                 "[cyan]auto[/cyan] lets the selected throughput profile choose values. "
-                "For H200, start with auto or a moderate explicit batch. "
-                "FAST/QwenFast action-token runs should use auto or 8/16; "
-                "if OOM occurs, relaunch with a smaller batch and [bold]Run mode = continue[/bold].",
+                "On H200, auto now keeps aggressive large-batch defaults and explicit batch values are passed through unchanged. "
+                "If OOM occurs, relaunch with a smaller batch and [bold]Run mode = continue[/bold].",
                 style="magenta",
             )
             vla_batch_size = _ask_optional_int("VLA per-device batch [auto]: ", name="VLA per-device batch", min_value=1)
@@ -1443,6 +1588,8 @@ def command_menu(args: argparse.Namespace) -> int:
             max_steps_per_task = None
             parallel_workers = None
             replicas_per_gpu = None
+            clients_per_server = None
+            server_concurrency = None
             eval_throughput_profile = "auto"
             calvin_render_backend = "auto"
             if preset == "calvin":
@@ -1478,13 +1625,15 @@ def command_menu(args: argparse.Namespace) -> int:
                     "Eval Throughput Profile",
                     ["auto", "h200_saturated", "balanced", "conservative"],
                     {
-                        "auto": "default multi-replica profile; uses more than one server per H200",
-                        "h200_saturated": "aggressive; higher GPU memory use and more simulator workers",
-                        "balanced": "2 policy-server replicas per selected GPU",
+                        "auto": "H200-aware default; two policy servers per selected GPU and shared clients",
+                        "h200_saturated": "aggressive; more model replicas and shared clients per H200",
+                        "balanced": "two policy servers per selected GPU and two clients per server",
                         "conservative": "1 policy-server replica per selected GPU",
                     },
                 )
                 replicas_per_gpu = _ask_optional_int("Policy server replicas per GPU [profile]: ", name="replicas per GPU", min_value=1)
+                clients_per_server = _ask_optional_int("CALVIN clients per policy server [profile]: ", name="clients per server", min_value=1)
+                server_concurrency = _ask_optional_int("Concurrent inference requests per server [profile]: ", name="server concurrency", min_value=1)
                 parallel_workers = _ask_optional_int("Total eval workers [auto]: ", name="parallel eval workers", min_value=1)
                 calvin_render_backend = _ask_choice(
                     "CALVIN Render Backend",
@@ -1511,6 +1660,8 @@ def command_menu(args: argparse.Namespace) -> int:
                 max_steps_per_task=max_steps_per_task,
                 parallel_workers=parallel_workers,
                 replicas_per_gpu=replicas_per_gpu,
+                clients_per_server=clients_per_server,
+                server_concurrency=server_concurrency,
                 eval_throughput_profile=eval_throughput_profile,
                 calvin_render_backend=calvin_render_backend,
                 allow_many_workers=False,
@@ -1570,6 +1721,21 @@ def build_parser() -> argparse.ArgumentParser:
     perf.add_argument("--nccl-test-max-bytes", default="16G")
     perf.add_argument("--timeout", type=int, default=300)
     perf.set_defaults(func=command_perf_check)
+
+    ens = sub.add_parser("ensemble", help="build checkpoint soup ensembles for eval or post-training")
+    ens.add_argument("--recipe", choices=["calvin_ultimate_moe"], help="predefined checkpoint list and default weights")
+    ens.add_argument("--ckpt", action="append", help="checkpoint path; repeat for multiple members")
+    ens.add_argument("--weights", help="comma/space-separated weights; defaults to recipe weights or uniform")
+    ens.add_argument("--method", choices=["weighted_soup", "uniform_soup"], default="weighted_soup")
+    ens.add_argument("--output-dir", help="run-like output directory containing config.yaml, dataset_statistics.json and checkpoints/")
+    ens.add_argument("--run-id", help="default output run id under checkpoint_root/ensembles/")
+    ens.add_argument("--reference-index", type=int, default=0, help="member whose config/statistics sidecars seed the ensemble run")
+    ens.add_argument("--no-strict", dest="strict", action="store_false", help="allow averaging only common compatible keys")
+    ens.set_defaults(strict=True)
+    ens.add_argument("--overwrite", action="store_true")
+    ens.add_argument("--inspect", action="store_true", help="only inspect members and weights; do not write a checkpoint")
+    ens.add_argument("--yes", action="store_true", help="skip confirmation")
+    ens.set_defaults(func=command_ensemble)
 
     train = sub.add_parser("train", help="launch tmux-managed training")
     train.add_argument("--preset", choices=keys("train_presets"), default="libero_vla")
@@ -1644,14 +1810,16 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--task")
     ev.add_argument("--trials", type=int)
     ev.add_argument("--max-steps-per-task", type=int, help="CALVIN max simulation steps per subtask; official setting is 360")
-    ev.add_argument("--parallel-workers", type=int, help="CALVIN total server/client worker count; default is selected GPUs times the eval throughput profile replicas")
-    ev.add_argument("--replicas-per-gpu", type=int, help="CALVIN policy-server replicas per selected GPU; ignored when --parallel-workers is set")
-    ev.add_argument("--allow-many-workers", action="store_true", help="allow more than 64 CALVIN eval workers; use only after checking system limits")
+    ev.add_argument("--parallel-workers", type=int, help="CALVIN total client/simulator workers; multiple clients may share one policy server")
+    ev.add_argument("--replicas-per-gpu", type=int, help="CALVIN policy-server model copies per selected GPU")
+    ev.add_argument("--clients-per-server", type=int, help="CALVIN client workers sharing each policy-server model copy")
+    ev.add_argument("--server-concurrency", type=int, help="concurrent inference requests handled by each policy-server model copy")
+    ev.add_argument("--allow-many-workers", action="store_true", help="allow CALVIN eval workers above the safe recommendation; use only after checking system limits")
     ev.add_argument(
         "--eval-throughput-profile",
         choices=["auto", "h200_saturated", "balanced", "conservative"],
         default="auto",
-        help="CALVIN eval concurrency profile; auto uses multiple policy-server replicas per GPU",
+        help="CALVIN eval concurrency profile; auto uses multiple H200 policy-server replicas plus shared clients",
     )
     ev.add_argument(
         "--calvin-render-backend",

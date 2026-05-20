@@ -590,6 +590,8 @@ def evaluate_policy_ddp(
     )
     if not eval_items:
         logger.warning("No CALVIN sequences assigned to shard start=%d stride=%d", sequence_start, sequence_stride)
+        with open(eval_log_dir / "sequence_progress.json", "w") as f:
+            json.dump({"complete": True, "results": [], "num_sequences": 0, "total_sequences": 0, "sequences": []}, f, indent=2, sort_keys=True)
         with open(eval_log_dir / "sequence_results.json", "w") as f:
             json.dump({"results": [], "num_sequences": 0, "sequences": []}, f, indent=2, sort_keys=True)
         return []
@@ -599,9 +601,25 @@ def evaluate_policy_ddp(
     # interval_len = int(num_sequences // device_num)
     # eval_sequences = eval_sequences[device_id*interval_len:min((device_id+1)*interval_len, num_sequences)]
     results = []
+    raw_results = []
     plans = defaultdict(list)
     total_sequences = len(eval_items)
     progress_start_time = time.time()
+
+    def write_sequence_progress(complete: bool = False) -> None:
+        with open(eval_log_dir / "sequence_progress.json", "w") as f:
+            json.dump(
+                {
+                    "complete": bool(complete),
+                    "results": [int(item) for item in results],
+                    "num_sequences": len(results),
+                    "total_sequences": total_sequences,
+                    "sequences": raw_results,
+                },
+                f,
+                indent=2,
+                sort_keys=True,
+            )
 
     if not debug:
         progress_iter = tqdm(eval_items, position=0, leave=True)
@@ -625,6 +643,15 @@ def evaluate_policy_ddp(
             max_steps_per_task=max_steps_per_task,
         )
         results.append(result)
+        raw_results.append(
+            {
+                "sequence_index": int(original_sequence_i),
+                "initial_state": initial_state,
+                "sequence": eval_sequence,
+                "success_count": int(result),
+            }
+        )
+        write_sequence_progress(False)
         if not debug:
             chain_success = count_success(results)
             progress_iter.set_description(
@@ -657,16 +684,7 @@ def evaluate_policy_ddp(
     #     create_tsne(plans, eval_log_dir, epoch)
 
     print_and_save(results, [item for _, item in eval_items], eval_log_dir, epoch)
-    raw_results = []
-    for (sequence_index, (initial_state, sequence)), result in zip(eval_items, results):
-        raw_results.append(
-            {
-                "sequence_index": int(sequence_index),
-                "initial_state": initial_state,
-                "sequence": sequence,
-                "success_count": int(result),
-            }
-        )
+    write_sequence_progress(True)
     with open(eval_log_dir / "sequence_results.json", "w") as f:
         json.dump(
             {

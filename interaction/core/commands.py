@@ -138,6 +138,8 @@ class EvalLaunch:
     max_steps_per_task: int | None = None
     parallel_workers: int | None = None
     replicas_per_gpu: int | None = None
+    clients_per_server: int | None = None
+    server_concurrency: int | None = None
     eval_throughput_profile: str = "auto"
     calvin_render_backend: str = "auto"
     dataset_path: str | None = None
@@ -505,6 +507,7 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
     lines.append(f"export STARVLA_STRUCTURE_POLICIES={q(','.join(spec.structure_policies))}")
     lines.append(f"export STARVLA_INIT_CHECKPOINT={q(spec.init_checkpoint or '')}")
     lines.append(f"export STARVLA_PERF_PROFILE={q(perf.resolved_profile)}")
+    lines.append("export STARVLA_ENABLE_BATCH_SAFETY_CAP=0")
     for key, value in sorted(perf.env_defaults.items()):
         lines.append(_export_default(key, value))
     for key, value in sorted(throughput.env_defaults.items()):
@@ -518,7 +521,7 @@ def build_train_command(spec: TrainLaunch) -> tuple[str, dict[str, Any]]:
     lines.append("echo \"[starvla-interaction] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}\"")
     lines.append("echo \"[starvla-interaction] perf_profile=${STARVLA_PERF_PROFILE}\"")
     lines.append("echo \"[starvla-interaction] throughput_profile=" + q(throughput.resolved_profile) + "\"")
-    lines.append("env | sort | grep -E '^(NCCL|TORCH_NCCL|CUDA_DEVICE_MAX_CONNECTIONS|PYTORCH_CUDA_ALLOC_CONF|STARVLA_PERF_PROFILE|OMP_NUM_THREADS|MKL_NUM_THREADS|NUMEXPR_NUM_THREADS|TORCH_ALLOW_TF32_CUBLAS_OVERRIDE|NVIDIA_TF32_OVERRIDE)=' || true")
+    lines.append("env | sort | grep -E '^(NCCL|TORCH_NCCL|CUDA_DEVICE_MAX_CONNECTIONS|PYTORCH_CUDA_ALLOC_CONF|STARVLA_PERF_PROFILE|STARVLA_ENABLE_BATCH_SAFETY_CAP|OMP_NUM_THREADS|MKL_NUM_THREADS|NUMEXPR_NUM_THREADS|TORCH_ALLOW_TF32_CUBLAS_OVERRIDE|NVIDIA_TF32_OVERRIDE)=' || true")
     lines.append("echo \"[starvla-interaction] command:\"")
     lines.append("printf '%q ' " + " ".join(q(item) for item in args) + "; echo")
     lines.append("if declare -F _starvla_phase >/dev/null; then _starvla_phase accelerate_launch; fi")
@@ -798,11 +801,46 @@ def _eval_replicas_per_gpu(profile: str, explicit: int | None, preset: dict[str,
     profile = (profile or "auto").strip().lower()
     if profile == "conservative":
         return 1
-    if profile == "balanced":
-        return 2
+    if profile in {"auto", "balanced"}:
+        return int(preset.get("balanced_replicas_per_gpu", 2))
     if profile == "h200_saturated":
         return int(preset.get("h200_saturated_replicas_per_gpu", 3))
-    return int(preset.get("default_replicas_per_gpu", 2))
+    return int(preset.get("default_replicas_per_gpu", 1))
+
+
+def _eval_clients_per_server(profile: str, explicit: int | None, preset: dict[str, Any]) -> int:
+    if explicit is not None:
+        return max(1, int(explicit))
+    profile = (profile or "auto").strip().lower()
+    if profile == "conservative":
+        return 1
+    if profile in {"auto", "balanced"}:
+        return int(preset.get("balanced_clients_per_server", 2))
+    if profile == "h200_saturated":
+        return int(preset.get("h200_saturated_clients_per_server", 2))
+    return int(preset.get("default_clients_per_server", 1))
+
+
+def _eval_server_concurrency(profile: str, explicit: int | None, preset: dict[str, Any]) -> int:
+    if explicit is not None:
+        return max(1, int(explicit))
+    profile = (profile or "auto").strip().lower()
+    if profile == "conservative":
+        return 1
+    if profile in {"auto", "balanced"}:
+        return int(preset.get("balanced_server_concurrency", 2))
+    if profile == "h200_saturated":
+        return int(preset.get("h200_saturated_server_concurrency", 2))
+    return int(preset.get("default_server_concurrency", 1))
+
+
+def _eval_timeout_env_lines() -> list[str]:
+    return [
+        "export STARVLA_CLIENT_CONNECT_TIMEOUT=${STARVLA_CLIENT_CONNECT_TIMEOUT:-900}",
+        "export STARVLA_CLIENT_FAIL_ON_CONNECT_TIMEOUT=${STARVLA_CLIENT_FAIL_ON_CONNECT_TIMEOUT:-1}",
+        "export STARVLA_CLIENT_REQUEST_TIMEOUT=${STARVLA_CLIENT_REQUEST_TIMEOUT:-300}",
+        "export STARVLA_CLIENT_FAIL_ON_REQUEST_TIMEOUT=${STARVLA_CLIENT_FAIL_ON_REQUEST_TIMEOUT:-1}",
+    ]
 
 
 def _calvin_merge_command(worker_count: int, eval_log_base: str | None) -> str:
@@ -837,6 +875,19 @@ def _calvin_merge_command(worker_count: int, eval_log_base: str | None) -> str:
         "    missing = [str(path) for path in files if not path.exists()]",
         "    if not missing:",
         "        break",
+        "    failed = []",
+        "    events_path = job_dir / 'events.jsonl'",
+        "    if events_path.exists():",
+        "        for line in events_path.read_text(errors='replace').splitlines():",
+        "            try:",
+        "                event = json.loads(line)",
+        "            except Exception:",
+        "                continue",
+        "            window = str(event.get('window') or '')",
+        "            if event.get('event') == 'failed' and (window.startswith('server') or window.startswith('client')):",
+        "                failed.append(f\"{window}: status={event.get('status')} detail={event.get('detail')}\")",
+        "    if failed:",
+        "        raise RuntimeError('CALVIN eval worker failed before producing results; missing=' + ', '.join(missing[:8]) + '; failures=' + '; '.join(failed[-8:]))",
         "    if time.time() > deadline:",
         "        raise TimeoutError('Timed out waiting for CALVIN worker results: ' + ', '.join(missing))",
         "    if time.time() - last_report > 60:",
@@ -845,7 +896,17 @@ def _calvin_merge_command(worker_count: int, eval_log_base: str | None) -> str:
         "    time.sleep(10)",
         "raw = []",
         "for path in files:",
-        "    raw.extend(json.loads(path.read_text()))",
+        "    data = json.loads(path.read_text())",
+        "    if isinstance(data, dict):",
+        "        if data.get('sequences') is not None:",
+        "            raw.extend(data.get('sequences') or [])",
+        "        elif data.get('results') is not None:",
+        "            for i, value in enumerate(data.get('results') or []):",
+        "                raw.append({'sequence_index': i, 'sequence': [], 'success_count': int(value)})",
+        "    elif isinstance(data, list):",
+        "        raw.extend(data)",
+        "    else:",
+        "        raise TypeError('Unsupported sequence_results format in ' + str(path))",
         "raw.sort(key=lambda item: int(item.get('sequence_index', -1)))",
         "if not raw:",
         "    raise RuntimeError('No CALVIN sequence results to merge')",
@@ -898,33 +959,60 @@ def build_eval_commands(spec: EvalLaunch) -> tuple[dict[str, str], dict[str, Any
         if not server_gpus:
             server_gpus = [0]
         replicas_per_gpu = _eval_replicas_per_gpu(spec.eval_throughput_profile, spec.replicas_per_gpu, preset)
-        requested_workers = spec.parallel_workers if spec.parallel_workers is not None else len(server_gpus) * replicas_per_gpu
+        clients_per_server = _eval_clients_per_server(spec.eval_throughput_profile, spec.clients_per_server, preset)
+        server_concurrency = _eval_server_concurrency(spec.eval_throughput_profile, spec.server_concurrency, preset)
+        policy_server_count = max(1, len(server_gpus) * replicas_per_gpu)
+        recommended_workers = max(1, policy_server_count * clients_per_server)
+        min_sequences_per_worker = max(1, int(preset.get("min_sequences_per_worker", 20)))
+        auto_workers = min(
+            recommended_workers,
+            max(1, (int(num_sequences) + min_sequences_per_worker - 1) // min_sequences_per_worker),
+        )
+        requested_workers = spec.parallel_workers if spec.parallel_workers is not None else auto_workers
         worker_count = max(1, int(requested_workers or 1))
+        worker_count = min(worker_count, max(1, int(num_sequences)))
+        if spec.start_client:
+            policy_server_count = max(1, min(policy_server_count, worker_count))
         extra = " ".join(q(item) for item in spec.extra_args)
 
         ports: list[int] = []
+        client_ports: list[int] = []
+        server_gpu_assignment: list[int] = []
         worker_gpu_assignment: list[int] = []
-        for worker_i in range(worker_count):
-            worker_port = port + worker_i
-            worker_gpu = server_gpus[worker_i % len(server_gpus)]
-            worker_gpu_assignment.append(worker_gpu)
+        for server_i in range(policy_server_count):
+            worker_port = port + server_i
+            worker_gpu = server_gpus[server_i % len(server_gpus)]
+            server_gpu_assignment.append(worker_gpu)
             ports.append(worker_port)
-            server_key = "server" if worker_count == 1 else f"server{worker_i}"
-            client_key = "client" if worker_count == 1 else f"client{worker_i}"
+            server_key = "server" if policy_server_count == 1 else f"server{server_i}"
             commands[server_key] = "\n".join(
                 [
-                    f"if declare -F _starvla_phase >/dev/null; then _starvla_phase eval_server_prepare preset={q(spec.preset)} worker={q(worker_i)} port={q(worker_port)} gpu={q(worker_gpu)}; fi",
+                    f"if declare -F _starvla_phase >/dev/null; then _starvla_phase eval_server_prepare preset={q(spec.preset)} server={q(server_i)} port={q(worker_port)} gpu={q(worker_gpu)} concurrency={q(server_concurrency)}; fi",
                     f"export your_ckpt={q(spec.ckpt)}",
                     f"export star_vla_python={q(DEFAULT_PYTHON)}",
                     f"export gpu_id={q(worker_gpu)}",
                     f"export port={q(worker_port)}",
                     "export STARVLA_POLICY_STATE_ADAPT=${STARVLA_POLICY_STATE_ADAPT:-1}",
+                    "export STARVLA_RETRY_ON_137=${STARVLA_RETRY_ON_137:-0}",
+                    f"export STARVLA_SERVER_INFERENCE_CONCURRENCY={q(server_concurrency)}",
+                    *_eval_timeout_env_lines(),
                     "if declare -F _starvla_phase >/dev/null; then _starvla_phase eval_server_launch; fi",
                     f"bash {q(preset['server_script'])}",
                 ]
             ) + "\n"
-            if not spec.start_client:
-                continue
+        if not spec.start_client:
+            client_count = 0
+        else:
+            client_count = worker_count
+        for worker_i in range(client_count):
+            server_i = worker_i % policy_server_count
+            worker_port = ports[server_i]
+            worker_gpu = server_gpu_assignment[server_i]
+            sequence_start = worker_i * num_sequences // worker_count
+            sequence_end = (worker_i + 1) * num_sequences // worker_count
+            worker_gpu_assignment.append(worker_gpu)
+            client_ports.append(worker_port)
+            client_key = "client" if worker_count == 1 else f"client{worker_i}"
             if spec.eval_log_dir:
                 worker_log_dir = str(Path(spec.eval_log_dir) / "workers" / f"{worker_i:03d}")
                 eval_log_dir_export = f"export eval_log_dir={q(worker_log_dir)}"
@@ -943,12 +1031,14 @@ def build_eval_commands(spec: EvalLaunch) -> tuple[dict[str, str], dict[str, Any
                     f"export eval_sequences_path={q(eval_sequences_path)}",
                     f"export num_sequences={q(num_sequences)}",
                     f"export max_steps_per_task={q(max_steps_per_task)}",
-                    f"export sequence_start={q(worker_i)}",
-                    f"export sequence_stride={q(worker_count)}",
+                    f"export sequence_start={q(sequence_start)}",
+                    f"export sequence_end={q(sequence_end)}",
+                    "export sequence_stride=1",
                     f"export STARVLA_CALVIN_RENDER_BACKEND={q(calvin_render_backend)}",
                     f"export STARVLA_CALVIN_RENDER_GPU={q(worker_gpu)}",
                     "export STARVLA_CALVIN_STATE_DIM=${STARVLA_CALVIN_STATE_DIM:-auto}",
                     "export STARVLA_CALVIN_STATE_SLICE=${STARVLA_CALVIN_STATE_SLICE:-first}",
+                    *_eval_timeout_env_lines(),
                     eval_log_dir_export,
                     "if declare -F _starvla_phase >/dev/null; then _starvla_phase eval_client_launch; fi",
                     f"bash {q(preset['client_script'])}" + (f" {extra}" if extra else ""),
@@ -963,13 +1053,21 @@ def build_eval_commands(spec: EvalLaunch) -> tuple[dict[str, str], dict[str, Any
             "ckpt": spec.ckpt,
             "port": port,
             "ports": ports,
+            "client_ports": client_ports,
             "server_gpu": spec.server_gpu,
             "server_gpus_resolved": server_gpus,
+            "server_gpu_assignment": server_gpu_assignment,
             "worker_gpu_assignment": worker_gpu_assignment,
             "client_gpu": spec.client_gpu,
             "start_client": spec.start_client,
             "parallel_workers": worker_count,
+            "policy_server_count": policy_server_count,
             "replicas_per_gpu": replicas_per_gpu,
+            "clients_per_server": clients_per_server,
+            "server_concurrency": server_concurrency,
+            "recommended_workers": recommended_workers,
+            "min_sequences_per_worker": min_sequences_per_worker,
+            "worker_sequence_sharding": "contiguous",
             "eval_throughput_profile": spec.eval_throughput_profile,
             "calvin_render_backend": calvin_render_backend,
             "trials": spec.trials,

@@ -45,9 +45,9 @@ class ModelClient:
         self._server_metadata = meta
 
         self.policy_setup = policy_setup
-        self.unnorm_key = unnorm_key
+        self.unnorm_key = self._resolve_unnorm_key_from_metadata(unnorm_key, meta)
         print(
-            f"*** policy_setup: {policy_setup}, unnorm_key: {unnorm_key}, "
+            f"*** policy_setup: {policy_setup}, unnorm_key: {self.unnorm_key}, "
             f"action_chunk_size: {self.action_chunk_size}, "
             f"server_meta: {meta} ***"
         )
@@ -78,6 +78,33 @@ class ModelClient:
 
         # Cached unnormalized chunk; refreshed every `action_chunk_size` steps.
         self.raw_actions: Optional[np.ndarray] = None
+
+    @staticmethod
+    def _resolve_unnorm_key_from_metadata(unnorm_key: Optional[str], meta: dict) -> Optional[str]:
+        available = list(meta.get("available_unnorm_keys") or [])
+        default = meta.get("default_unnorm_key")
+        requested = unnorm_key
+        if isinstance(requested, str):
+            stripped = requested.strip()
+            requested = None if stripped.lower() in {"", "none", "null", "auto", "default"} else stripped
+
+        if requested in available:
+            return requested
+        if requested is None:
+            if default in available:
+                return default
+            if len(available) == 1:
+                return available[0]
+            return None
+        if len(available) == 1:
+            fallback = available[0]
+            print(
+                f"*** unnorm_key fallback: requested={requested!r} -> {fallback!r}; "
+                f"available_unnorm_keys={available} ***",
+                flush=True,
+            )
+            return fallback
+        return requested
 
     def _add_image_to_history(self, image: np.ndarray) -> None:
         self.image_history.append(image)

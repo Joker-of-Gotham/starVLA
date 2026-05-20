@@ -243,3 +243,37 @@ server metadata and sends the checkpoint's expected proprio state dimension
 from `robot_obs`. The server also slices or pads mismatched state tensors once
 with a warning, so state/action dimension failures surface immediately with the
 actual and expected dimensions.
+
+## Ensemble before eval / post-training
+
+`interaction/starvla.py ensemble` builds a normal StarVLA run directory from
+multiple compatible checkpoints:
+
+- `config.yaml` and `dataset_statistics.json` are copied from a reference
+  member and updated with ensemble metadata.
+- `checkpoints/steps_ensemble_pytorch_model.pt` is a weighted or uniform
+  checkpoint soup.
+- The output checkpoint can be passed directly to `interaction/starvla.py eval`
+  or used as `train --init-checkpoint` for post-training.
+
+Fast CALVIN MoE recipe:
+
+```bash
+bash interaction/bin/starvla-build-calvin-ultimate-ensemble.sh
+```
+
+Equivalent explicit command:
+
+```bash
+python interaction/starvla.py ensemble \
+  --recipe calvin_ultimate_moe \
+  --method weighted_soup \
+  --output-dir /inspire/qb-ilm2/project/26summer-camp-10/26220447/data/starvla/checkpoints/ensembles/calvin_ultimate_moe_soup \
+  --overwrite \
+  --yes
+```
+
+The predefined recipe uses the validated GTY 60k checkpoint, GTY MoE
+posttrain 95k, and the WMH adaptive MoE 15k checkpoint/final pair. The default
+weights favor the two GTY checkpoints while keeping WMH as a diversity source:
+`0.38,0.42,0.10,0.10`. Use `--method uniform_soup` or `--weights` to override.

@@ -218,6 +218,13 @@ examples/SPVLA
 examples/SimplerEnv/eval_files/eval_scripts
 examples/Robotwin/train_files/submit_robotwin_training.sh
 starVLA/dataloader/gr00t_lerobot/datasets_temp.py
+
+# SII SummerCamp local/generated artifacts
+envSet/
+interaction/runs/
+interaction/ensembles/
+interaction/**/__pycache__/
+*.pid
 MUJOCO_LOG.TXT
 examples/MultiRobot/*
 
@@ -247,6 +254,7 @@ tmp
 !docs/model_zoo.md
 !docs/starVLA_guideline.md
 !docs/WM4A.md
+!docs/SUMMERCAMP_STARVLA.md
 
 
 logs/*

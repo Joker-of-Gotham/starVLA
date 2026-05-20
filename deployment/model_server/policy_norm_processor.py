@@ -260,14 +260,33 @@ class PolicyNormProcessor:
 
         # 3-early) Pick the requested unnorm_key (or auto-select) BEFORE
         # resolving robot_type so we can use it as a hint for multi-robot mixtures.
+        if isinstance(unnorm_key, str) and unnorm_key.strip().lower() in {
+            "",
+            "none",
+            "null",
+            "auto",
+            "default",
+        }:
+            unnorm_key = None
         if unnorm_key is None:
             if len(norm_stats) == 1:
                 unnorm_key = next(iter(norm_stats.keys()))
             # else: defer error to step 3 below after robot_type resolution attempt
         elif unnorm_key not in norm_stats:
-            raise KeyError(
-                f"unnorm_key={unnorm_key!r} not in {list(norm_stats.keys())}"
-            )
+            if len(norm_stats) == 1:
+                fallback_key = next(iter(norm_stats.keys()))
+                logger.warning(
+                    "PolicyNormProcessor remapped unavailable unnorm_key=%r to only available key=%r "
+                    "for ckpt=%s",
+                    unnorm_key,
+                    fallback_key,
+                    self._ckpt_path,
+                )
+                unnorm_key = fallback_key
+            else:
+                raise KeyError(
+                    f"unnorm_key={unnorm_key!r} not in {list(norm_stats.keys())}"
+                )
         self._unnorm_key = unnorm_key  # may still be None for multi-key case
 
         # 1) Resolve which DataConfig was used at training.

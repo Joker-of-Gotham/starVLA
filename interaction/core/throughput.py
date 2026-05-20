@@ -72,22 +72,20 @@ def resolve_throughput_settings(
         target=model_target.get("vlm"),
         model_key=model_key,
     )
-    safe_cap = _explicit_batch_cap(model_key, framework, mode, resolved)
-    if safe_cap:
-        cap_vla = safe_cap.get("vla")
-        cap_vlm = safe_cap.get("vlm")
+    advisory_cap = _advisory_batch_cap(model_key, framework, mode, resolved)
+    if advisory_cap:
+        cap_vla = advisory_cap.get("vla")
+        cap_vlm = advisory_cap.get("vlm")
         if explicit_vla_batch is not None and cap_vla is not None and vla_batch is not None and vla_batch > cap_vla:
-            warnings.append(
-                f"VLA per-device batch {vla_batch} is unsafe for {framework}/{model_key} under {resolved}; "
-                f"clamped to {cap_vla}. Use throughput profile 'none' only for deliberate profiling."
+            notes.append(
+                f"VLA per-device batch {vla_batch} is above the old advisory cap {cap_vla} for {framework}/{model_key}; "
+                "kept unchanged because explicit user batch values are no longer auto-clamped."
             )
-            vla_batch = cap_vla
         if explicit_vlm_batch is not None and cap_vlm is not None and vlm_batch is not None and vlm_batch > cap_vlm:
-            warnings.append(
-                f"VLM per-device batch {vlm_batch} is unsafe for {framework}/{model_key} under {resolved}; "
-                f"clamped to {cap_vlm}. Use throughput profile 'none' only for deliberate profiling."
+            notes.append(
+                f"VLM per-device batch {vlm_batch} is above the old advisory cap {cap_vlm} for {framework}/{model_key}; "
+                "kept unchanged because explicit user batch values are no longer auto-clamped."
             )
-            vlm_batch = cap_vlm
 
     if resolved == "h200_saturated":
         workers = 8
@@ -101,7 +99,7 @@ def resolve_throughput_settings(
                 "NVIDIA_TF32_OVERRIDE": "1",
             }
         )
-        notes.append("H200 throughput profile raises per-device batch where safe and enables persistent prefetched workers.")
+        notes.append("H200 throughput profile uses aggressive large-batch defaults and enables persistent prefetched workers.")
     elif resolved == "balanced":
         workers = 4
         prefetch = 2
@@ -154,7 +152,9 @@ def _resolve_profile(profile: str, selected_gpus: list[int]) -> str:
         return profile
     visible = {gpu.index: gpu for gpu in detect_gpus()}
     selected = [visible[index] for index in selected_gpus if index in visible]
-    if len(selected_gpus) >= 8 and selected and all(gpu.is_h200 for gpu in selected):
+    if selected_gpus and selected and len(selected) == len(selected_gpus) and all(gpu.is_h200 for gpu in selected):
+        return "h200_saturated"
+    if len(selected_gpus) >= 4 and not selected:
         return "h200_saturated"
     if len(selected_gpus) >= 4:
         return "balanced"
@@ -169,38 +169,39 @@ def _batch_target_for_model(model_key: str, framework: str, mode: str, profile: 
 
     if profile == "conservative":
         if is_fast:
-            return {"vla": 2, "vlm": 1}
+            return {"vla": 8, "vlm": 2}
         if "cosmos" in key or "cosmo" in fw:
-            return {"vla": 2, "vlm": 1}
-        return {"vla": 2 if "9b" in key else 4, "vlm": 1 if "9b" in key else 2}
+            return {"vla": 8, "vlm": 2}
+        return {"vla": 8 if "9b" in key else 16, "vlm": 2 if "9b" in key else 4}
     if profile == "balanced":
         if is_fast:
-            return {"vla": 4, "vlm": 1}
+            return {"vla": 32, "vlm": 4}
         if "cosmos" in key or "cosmo" in fw:
-            return {"vla": 4, "vlm": 1}
+            return {"vla": 24, "vlm": 2}
         if "9b" in key:
-            return {"vla": 4, "vlm": 1}
+            return {"vla": 16, "vlm": 2}
         if "4b" in key or "qwen3-vl" in key or "qwen3vl" in key:
-            return {"vla": 8, "vlm": 2}
-        return {"vla": 8, "vlm": 2}
+            return {"vla": 32, "vlm": 4}
+        return {"vla": 48, "vlm": 4}
 
-    # h200_saturated: use H200 memory aggressively while keeping large VLMs guarded.
+    # h200_saturated: use H200 memory aggressively. No automatic downshift is
+    # applied; explicit user values are passed through unchanged.
     if is_fast:
-        return {"vla": 8, "vlm": 2}
+        return {"vla": 64 if not is_cotrain else 32, "vlm": 4}
     if "cosmos" in key or "cosmo" in fw:
-        return {"vla": 8, "vlm": 1}
+        return {"vla": 32, "vlm": 2}
     if "9b" in key:
-        return {"vla": 4, "vlm": 1}
+        return {"vla": 16, "vlm": 2}
     if "4b" in key or "qwen3-vl" in key or "qwen3vl" in key:
-        return {"vla": 8 if is_cotrain else 12, "vlm": 2}
+        return {"vla": 64 if not is_cotrain else 32, "vlm": 4}
     if "2b" in key:
-        return {"vla": 16 if is_cotrain else 24, "vlm": 4}
+        return {"vla": 96 if not is_cotrain else 48, "vlm": 8}
     if "0.8b" in key or "0_8b" in key:
-        return {"vla": 24 if is_cotrain else 32, "vlm": 4}
-    return {"vla": 8, "vlm": 2}
+        return {"vla": 128 if not is_cotrain else 64, "vlm": 8}
+    return {"vla": 64, "vlm": 4}
 
 
-def _explicit_batch_cap(model_key: str, framework: str, mode: str, profile: str) -> dict[str, int] | None:
+def _advisory_batch_cap(model_key: str, framework: str, mode: str, profile: str) -> dict[str, int] | None:
     if profile == "none":
         return None
     fw = str(framework).lower()
@@ -235,9 +236,6 @@ def _choose_batch(*, explicit: int | None, preset: int | None, target: int | Non
         return preset
     if preset is None:
         return target
-    key = str(model_key).lower()
-    if "9b" in key or "qwen3vl" in key or "qwen3-vl" in key:
-        return min(preset, target)
     return max(preset, target)
 
 
