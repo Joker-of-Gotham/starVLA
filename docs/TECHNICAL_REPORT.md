@@ -29,9 +29,11 @@ $$
 连续动作行为克隆的主损失为：
 
 $$
+\begin{aligned}
 \mathcal L_{\mathrm{BC}}
-= \sum_g w_g \left\lVert \pi_\theta(x)_g-\tilde a_g \right\rVert_1
-+ \lambda_g \,\mathrm{BCE}(\hat g,g).
+&= \sum_g w_g \left\lVert \pi_\theta(x)_g-\tilde a_g \right\rVert_1 \\
+&\quad + \lambda_g \,\operatorname{BCE}(\hat g,g).
+\end{aligned}
 $$
 
 部署时再反归一化：
@@ -69,9 +71,11 @@ dataset -> training policy -> base model -> action expert -> structure policy
 Cosmos-Predict2 世界模型路线也被纳入，因为长程任务理论上受益于未来 latent 和环境动力学建模。它的条件分解更接近：
 
 $$
+\begin{aligned}
 p(a_{t:t+H}\mid o_t,l,s_t)
-= \int p_A(a_{t:t+H}\mid z_{\mathrm{future}},s_t,l)
-\,p_W(z_{\mathrm{future}}\mid o_t,l)\,dz_{\mathrm{future}}.
+&= \int p_A(a_{t:t+H}\mid z_{\mathrm{future}},s_t,l)\\
+&\quad \cdot p_W(z_{\mathrm{future}}\mid o_t,l)\,dz_{\mathrm{future}}.
+\end{aligned}
 $$
 
 但在本次时间预算下，世界模型骨干训练和推理成本较高，action expert 还需要更长后训练才能把 future latent 转成稳定控制。因此本次主要有效结果集中在 Qwen/MoE VLA 路线，世界模型保留为探索性分支。
@@ -83,9 +87,11 @@ OFT/MLP continuous BC 是第一 baseline，因为它直接优化连续 action ch
 $$
 \begin{aligned}
 \mathcal L_{\mathrm{OFT}}
-&= \sum_t \sum_g w_g
-\left\lVert \tilde a_{t,g}-f_\theta(c_t)_g \right\rVert_1 \\
-&\quad + \lambda_{\mathrm{grip}}\operatorname{BCE}(g_t,\hat g_t).
+&= \sum_t\left[
+\sum_g w_g
+\left\lVert \tilde a_{t,g}-f_\theta(c_t)_g \right\rVert_1
+{}+ \lambda_{\mathrm{grip}}\,\operatorname{BCE}(g_t,\hat g_t)
+\right].
 \end{aligned}
 $$
 
@@ -203,11 +209,13 @@ $$
 $$
 
 $$
+\begin{aligned}
 \min_\theta
-\mathcal L_{\mathrm{new}}
-+\lambda_{\mathrm{replay}}\mathcal L_{\mathrm{old}}
-+\lambda_{\mathrm{KL}}\mathrm{KL}(\pi_\theta\Vert\pi_0)
-+\lambda_{\mathrm{rank}}\mathcal L_{\mathrm{pref}}.
+&\quad \mathcal L_{\mathrm{new}}
+{}+\lambda_{\mathrm{replay}}\mathcal L_{\mathrm{old}}\\
+&\quad +\lambda_{\mathrm{KL}}\operatorname{KL}(\pi_\theta\Vert\pi_0)
+{}+\lambda_{\mathrm{rank}}\mathcal L_{\mathrm{pref}}.
+\end{aligned}
 $$
 
 本分支重点支持：
@@ -233,15 +241,20 @@ $$
 训练时可用 future representation alignment：
 
 $$
+\begin{aligned}
 \mathcal L_{\mathrm{future}}
-=\sum_k
+&= \sum_k
 \left\lVert g_\theta(c_t,a_{t:t+k})
--\mathrm{sg}(\phi(o_{t+k}))\right\rVert_2^2,
+{}-\mathrm{sg}(\phi(o_{t+k}))\right\rVert_2^2,
+\end{aligned}
 $$
 
 $$
-\mathcal L=\mathcal L_{\mathrm{action}}
-+\lambda_w\mathcal L_{\mathrm{future}}.
+\begin{aligned}
+\mathcal L
+&= \mathcal L_{\mathrm{action}}
+{}+\lambda_w\mathcal L_{\mathrm{future}}.
+\end{aligned}
 $$
 
 这相当于用 future latent 作为 representation regularizer，迫使 action expert 的 hidden states 保留与未来状态相关的信息。优点是对长程规划和环境泛化有理论吸引力；缺点是计算成本高，且 CALVIN 对末端控制精度敏感，future latent 不能自动保证 gripper/contact 时序正确。
@@ -310,10 +323,12 @@ MoE95k LoRA Aug 的 `n=300` 结果为 Avg `1.863`、Task 5 `12.7%`，优于 GTY 
 异构 checkpoint soup 的 `n=1000` Avg 只有 `0.302`，Task 5 为 `0.0%`。这验证了参数级 ensemble 的适用边界：它要求同构结构、相近初始化和同一 basin。MoE/router/action head 不同的模型直接平均，会破坏专家路由和动作 mode。后续应改用 action-level ensemble：
 
 $$
+\begin{aligned}
 \pi_{\mathrm{ens}}(a\mid x)
-=\sum_m w_m(x)\pi_m(a\mid x),
-\qquad
-w_m(x)=\mathrm{softmax}\left(\frac{\mathrm{score}_m(x)}{\tau}\right).
+&= \sum_m w_m(x)\pi_m(a\mid x),\\
+w_m(x)
+&= \operatorname{softmax}\left(\frac{\mathrm{score}_m(x)}{\tau}\right).
+\end{aligned}
 $$
 
 其中 $\mathrm{score}_m$ 可来自 validation success、uncertainty、value head 或 task/domain router。
