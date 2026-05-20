@@ -238,11 +238,82 @@ MoE-Adaptive 对 lightbulb tasks 很强，但严重伤害 drawer tasks。后续�
 
 | name | checkpoint | 推荐用途 |
 | --- | --- | --- |
+| `no_mirror_MoE95k_LoRA` | Hugging Face: `https://huggingface.co/wwwafwet/no-mirror_MoE95k_LoRA` | 当前已上传的推荐权重；MoE95k + fresh LoRA + no-mirror hardv2 aug |
 | `aug_hardv2` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_aug_hardv2_8000_0519_171848/checkpoints/steps_8000_pytorch_model.pt` | 当前 WMH verified best |
 | `mirror_hardv2` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_mirror_hardv2_8000_0519_171848/checkpoints/steps_8000_pytorch_model.pt` | left/right diagnostic branch |
 | `lora2000` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_lora_explore_ft2000_0519_210816/checkpoints/steps_2000_pytorch_model.pt` | LoRA reference |
 | `base8k` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_state8_connector_8h200_bs96_8k_0519_083200/checkpoints/steps_8000_pytorch_model.pt` | baseline |
 | `GTY MoE95k` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/GTY/runs/gty_moe_posttrain_8h_GTY_0519_182014/checkpoints/steps_95000_pytorch_model.pt` | 高潜力候选，需补 n300/n1000 |
+
+### 7.1 Hugging Face 权重下载
+
+已上传的 no-mirror MoE95k + LoRA 权重可以直接从 Hugging Face 下载：
+
+```bash
+git lfs install
+git clone https://huggingface.co/wwwafwet/no-mirror_MoE95k_LoRA
+cd no-mirror_MoE95k_LoRA
+```
+
+推荐使用：
+
+```text
+checkpoints/steps_7000_pytorch_model.pt
+```
+
+仓库中还包含：
+
+```text
+checkpoints/steps_5000_pytorch_model.pt
+run/config.yaml
+run/config.full.yaml
+run/dataset_statistics.json
+run/summary.jsonl
+eval/d_n100_metrics.json
+```
+
+如果只想先拉取仓库元信息、不下载大权重：
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/wwwafwet/no-mirror_MoE95k_LoRA
+cd no-mirror_MoE95k_LoRA
+git lfs pull -I checkpoints/steps_7000_pytorch_model.pt
+```
+
+上传时的训练来源：
+
+```text
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_moe95k_lora_aug_3h_bs96_0520_045012/checkpoints/steps_7000_pytorch_model.pt
+```
+
+当前随 HF 仓库保存的 D n100 指标：
+
+```text
+avg_seq_len = 1.94
+SR@1 = 77.0%
+SR@2 = 55.0%
+SR@3 = 35.0%
+SR@4 = 18.0%
+SR@5 = 9.0%
+```
+
+该结果是 n100 快速评测，适合作为 high-potential checkpoint 的公开下载入口；正式排序仍建议补 D n300 / n1000。
+
+本地评测示例：
+
+```bash
+cd /inspire/qb-ilm2/project/26summer-camp-10/26220172/WMH/starVLA
+source /inspire/qb-ilm2/project/26summer-camp-10/26220172/starvla_env.sh
+
+CKPT=/path/to/no-mirror_MoE95k_LoRA/checkpoints/steps_7000_pytorch_model.pt \
+EVAL_LOG_DIR=/tmp/eval_no_mirror_moe95k_lora_d_n300 \
+TOTAL_SEQUENCES=300 \
+GPU_IDS=0,1,2,3 \
+WORKERS_PER_GPU=1 \
+BASE_PORT=7400 \
+CALVIN_SEND_STATE=1 \
+bash examples/calvin_autoresearch/scripts/run_eval_abc_to_d_parallel_auto.sh
+```
 
 ## 8. 组员如何评测
 
