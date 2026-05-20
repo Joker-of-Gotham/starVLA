@@ -1,232 +1,313 @@
-# CALVIN AutoResearch Smoke Baseline
+# WMH CALVIN AutoResearch
 
-This directory is the safe entry point for the current WMH CALVIN baseline and
-the final image submission workflow:
+本目录记录 WMH 在 StarVLA / CALVIN ABC -> D 任务上的完整探索：训练只使用 CALVIN ABC，CALVIN D 只用于 closed-loop evaluation；不使用任何上游 action-trained checkpoints。这里同时包含代码改动、训练脚本、评测脚本、公开 checkpoint 评测入口、failure analysis 和 mirror augmentation 诊断材料。
 
-- VLM backbone: `Qwen3-VL-4B-Instruct-Action` as a base model asset.
-- Action head: StarVLA `QwenGR00T`, initialized from config, not from an upstream action-trained checkpoint.
-- Imitation data: CALVIN ABC LeRobot v3.0 mixture `calvin_abc_train_v3.0`.
-- Closed-loop eval: official CALVIN task D with a checkpoint produced by this WMH run.
+更完整的路线论证见：
 
-Do not use `examples/calvin/eval_files/run_policy_server.sh` or
-`examples/calvin/eval_files/eval_calvin.sh` for this baseline. Those upstream
-scripts still contain trained checkpoint defaults and are intentionally left
-unchanged until WMH-trained checkpoints replace them.
+```text
+examples/calvin_autoresearch/docs/calvin_abc_d_技术路线与failure分析报告_中文整理版.md
+```
 
-## Final Submission Entrypoints
+## 1. 总览
 
-Run these from a shell that has the project and public data mounts visible.
+本次 WMH 分支的目标不是单纯把 baseline 训练更久，而是围绕 CALVIN D failure pattern 做有针对性的 data/model adaptation。
+
+核心结论：
+
+- 当前最可靠的 verified route 是 `hard-task balanced ABC training + controlled language paraphrase + task-aware image augmentation`。
+- `hardv2 aug` 是目前 WMH 分支最强的已验证 checkpoint，D n300 达到 `avg_seq_len=1.847`、`SR@5=12.0%`。
+- `left/right mirror augmentation` 已实现并做了可视化和 n300 评估。它明显强于 baseline，但略弱于 non-mirror hardv2，因此当前作为 diagnostic branch，而不是默认主路线。
+- `LoRA2000` 明显优于 baseline，但单独使用仍弱于 hardv2 augmented data route。
+- `MoE / adaptive action head` 有潜力，但必须检查 per-task regression，尤其是 drawer regression。GTY MoE95k 需要补 n300/n1000 公平评测。
+
+## 2. 合规边界
+
+本分支遵守以下边界：
+
+- 训练数据只使用 CALVIN ABC。
+- CALVIN D 只用于 closed-loop evaluation，不进入训练。
+- 不使用 LIBERO、RoboTwin、RoboCasa、Behavior、CALVIN-D 等上游 action-trained checkpoints。
+- 允许使用 base VLM checkpoint：`Qwen3-VL-4B-Instruct-Action`。
+- 允许使用我们自己或组员在 CALVIN ABC 上训练得到的 checkpoints 作为 continuation source。
+
+主要公共路径：
+
+```text
+project:
+/inspire/qb-ilm2/project/26summer-camp-10/26220172/WMH/starVLA
+
+public runtime:
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin
+
+base model:
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/shared/models/base/Qwen3-VL-4B-Instruct-Action
+
+CALVIN ABC LeRobot:
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/shared/datasets/calvin_lerobot
+
+official CALVIN D eval data:
+/inspire/qb-ilm2/project/26summer-camp-10/public/inspire_shared/calvin_d_d
+```
+
+## 3. 这次分支做了什么改动
+
+### 3.1 训练数据和 dataloader
+
+相关文件：
+
+```text
+starVLA/dataloader/__init__.py
+starVLA/dataloader/gr00t_lerobot/datasets.py
+starVLA/dataloader/lerobot_datasets.py
+examples/calvin_autoresearch/train_files/data_registry/data_config.py
+examples/calvin_autoresearch/train_files/*.yaml
+```
+
+主要改动：
+
+- 增加 CALVIN ABC 专用 dataset mixture 和 data registry。
+- 增加 hard-task balanced sampling，重点覆盖 `slider`、`drawer`、`light/LED`、`push_*_right` 等 D-critical hard tasks。
+- 增加 canonical task mapping，避免不同 language template 导致 task identity 混乱。
+- 增加 controlled language paraphrase，不改变 canonical task label。
+- 增加 task-aware image augmentation，避免强 generic augmentation 破坏小 affordance。
+- 增加 left/right mirror augmentation 的数据路径和配置开关。
+- 接通 CALVIN state/proprio，支持 8-D state 输入和 state-aware eval。
+
+### 3.2 模型和训练
+
+相关文件：
+
+```text
+starVLA/model/framework/VLM4A/QwenGR00T.py
+starVLA/training/train_starvla.py
+starVLA/training/trainer_utils/trainer_tools.py
+examples/calvin_autoresearch/train_files/moe_lora/qwen_gr00t_moe_lora.py
+```
+
+主要改动：
+
+- 支持 QwenGR00T action head 的 CALVIN ABC-only training。
+- 支持 connector/interface 训练，同时保持 Qwen backbone 主要冻结。
+- 支持 Qwen LoRA exploration。
+- 支持 MoE95k checkpoint + fresh LoRA continuation。
+- 加强训练配置、save interval、public run path 和 H200 多卡 launcher。
+
+### 3.3 Policy server 和 CALVIN eval
+
+相关文件：
+
+```text
+deployment/model_server/policy_norm_processor.py
+deployment/model_server/policy_wrapper.py
+deployment/model_server/server_policy.py
+deployment/model_server/tools/websocket_policy_client.py
+examples/calvin/eval_files/eval_calvin.py
+```
+
+主要改动：
+
+- 修复/增强 websocket policy server/client 在 CALVIN closed-loop eval 下的兼容性。
+- 支持从 CALVIN evaluator 向 policy server 发送 state。
+- 增加 normalization 和 action chunk 处理的稳定性。
+- 增加更详细的 evaluation metrics，包括 conditional success、failure position、per-task success、near-miss、action magnitude、jitter、saturation 和 gripper switch rate。
+
+### 3.4 WMH 一键入口和脚本
+
+相关文件：
+
+```text
+wmh
+train_nohup.sh
+run_wmh_adaptive.sh
+examples/calvin_autoresearch/scripts/
+```
+
+主要改动：
+
+- 新增 `./wmh` 作为短命令入口，封装训练、评测、tail log、status、finalize 等常用操作。
+- 新增 `train_nohup.sh`，用于在 H200 节点上后台启动 WMH 分支训练。
+- 新增 public-only eval runner，让组员只用 `public/seven` 可达路径也能跑 WMH checkpoint 评测。
+- 新增多 GPU / 多 worker 并行 D evaluation 和手动 finalize 工具。
+- 新增 mirror preview、candidate transform diagnostics、metric summary 和 ABC-vs-D comparison 工具。
+
+## 4. 主要结果
+
+以下结果均为 CALVIN D closed-loop evaluation。
+
+| Branch | N | Avg Seq Len | SR@1 | SR@2 | SR@3 | SR@4 | SR@5 | 结论 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `base8k` | 300 | 1.050 | 54.0% | 25.7% | 13.7% | 8.0% | 3.7% | reference baseline |
+| `base8k` | 1000 | 1.086 | 53.2% | 27.9% | 15.2% | 8.0% | 4.3% | stable baseline |
+| `lora2000` | 300 | 1.630 | 64.0% | 43.7% | 27.3% | 18.3% | 9.7% | LoRA 有效 |
+| `aug_hardv2` | 300 | 1.847 | 72.0% | 51.0% | 29.3% | 20.3% | 12.0% | 当前 WMH 最强 verified branch |
+| `mirror_hardv2` | 300 | 1.753 | 72.7% | 47.7% | 29.0% | 16.3% | 9.7% | mirror 有帮助，但略弱于 non-mirror |
+| `moe_adaptive` | 300 | 1.397 | 67.7% | 38.0% | 19.0% | 10.3% | 4.7% | mixed result，有 task regression |
+| `GTY MoE95k` | 100 | 1.910 | 76.0% | 54.0% | 32.0% | 17.0% | 12.0% | 潜力很强，但需补 n300/n1000 |
+
+最关键对比：
+
+```text
+base8k n300:
+  avg_seq_len = 1.050
+  SR@1 = 54.0%
+  SR@5 = 3.7%
+
+aug_hardv2 n300:
+  avg_seq_len = 1.847
+  SR@1 = 72.0%
+  SR@5 = 12.0%
+```
+
+这说明主要收益来自 hard-task data distribution 和 task-aware augmentation，而不是简单延长 baseline 训练。
+
+## 5. Mirror 增强分析
+
+Image #1 展示了 left/right mirror augmentation 的人工检查样例：每一行包含原始 left/right task、mirror 后的目标 task、语言替换、图像翻转、action chunk x-y 轨迹和 episode state 轨迹。这个预览用于确认 mirror 不是只翻图，而是同时保持 image、language、canonical task id、action 和 state 尽量一致。
+
+![Image #1: left/right mirror augmentation preview](reports/lr_mirror_trajectory_preview_20260520_032017/contact_sheet.jpg)
+
+Mirror 增强覆盖的初始任务：
+
+```text
+move_slider_left  <-> move_slider_right
+push_red_block_left   <-> push_red_block_right
+push_blue_block_left  <-> push_blue_block_right
+push_pink_block_left  <-> push_pink_block_right
+```
+
+Mirror transform 的核心设计：
+
+- primary image 水平翻转。
+- wrist image 作为 ablation，当前更推荐 primary+wrist 一起 flip，因为多视角更一致。
+- canonical task id 交换 left/right。
+- language template 中 left/right 交换或替换为 mirrored canonical template。
+- action chunk 上对方向相关维度做 sign transform，诊断结果支持 `action.x *= -1`，并支持同时处理 `action.roll` 和 `action.yaw`。
+- state 不能粗暴取负。当前候选是围绕 global `state.x` mean 做镜像：`state.x = 2 * mean_x - state.x`。
+
+为什么 mirror 不是默认主路线：
+
+- 它显著强于 baseline：`mirror_hardv2 n300 avg_seq_len=1.753, SR@5=9.7%`。
+- 但它略弱于 non-mirror hardv2：`aug_hardv2 n300 avg_seq_len=1.847, SR@5=12.0%`。
+- 可能原因是 wrist camera 几何、action sign convention、state transform 和真实 eval 分布之间仍有轻微不一致。
+- 因此 mirror 当前是 diagnostic branch：适合用于 left/right subset targeted eval，不作为默认训练增强。
+
+对应材料：
+
+```text
+docs/left_right_mirror_plan.md
+scripts/check_lr_mirror_candidates.py
+scripts/preview_lr_mirror_aug.py
+scripts/visualize_lr_mirror_trajectory.py
+reports/lr_mirror_diagnostics_20260519/
+reports/lr_mirror_trajectory_preview_20260520_032017/
+```
+
+## 6. Failure Pattern 总结
+
+### 6.1 First-step failure 是主要瓶颈
+
+`base8k n300` 中有 `138/300` 条 sequence 在第一个 instruction 就失败。`hardv2 aug` 将这个数字降到 `84/300`，这解释了大部分 aggregate gain。
+
+结论：当前阶段先提升 atomic task reliability，比直接追求复杂 long-horizon reasoning 更有效。
+
+### 6.2 失败集中在少数 hard tasks
+
+失败不是均匀分布的，主要集中在：
+
+- slider left/right；
+- lightbulb / LED on/off；
+- drawer open/close；
+- directional block push；
+- stack/lift/place 等 contact-heavy tasks。
+
+因此使用 hard-task balanced sampling，而不是仅靠更多训练步数。
+
+### 6.3 Timeout 和 near-miss 表明模型经常“做了但没做准”
+
+很多失败发生在 rollout horizon 末尾，说明 policy 通常没有立即崩溃，而是在目标区域附近做了相关动作但没有满足 predicate。问题更接近 grounding、affordance、contact timing 和 task-state 判断，而不是纯动作噪声。
+
+### 6.4 Action jitter 不是主因
+
+`hardv2 aug` 的 jitter 与 baseline 接近，但性能显著更好。因此当前主瓶颈不是 smoothing，而是 task grounding 和 hard-task coverage。
+
+### 6.5 MoE 必须看 per-task regression
+
+MoE-Adaptive 对 lightbulb tasks 很强，但严重伤害 drawer tasks。后续任何 MoE / LoRA 分支都必须检查 drawer、slider、light/LED 等 per-task metrics，不能只看 avg seq len。
+
+## 7. 当前推荐 checkpoint
+
+| name | checkpoint | 推荐用途 |
+| --- | --- | --- |
+| `aug_hardv2` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_aug_hardv2_8000_0519_171848/checkpoints/steps_8000_pytorch_model.pt` | 当前 WMH verified best |
+| `mirror_hardv2` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_mirror_hardv2_8000_0519_171848/checkpoints/steps_8000_pytorch_model.pt` | left/right diagnostic branch |
+| `lora2000` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_lora_explore_ft2000_0519_210816/checkpoints/steps_2000_pytorch_model.pt` | LoRA reference |
+| `base8k` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_state8_connector_8h200_bs96_8k_0519_083200/checkpoints/steps_8000_pytorch_model.pt` | baseline |
+| `GTY MoE95k` | `/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/GTY/runs/gty_moe_posttrain_8h_GTY_0519_182014/checkpoints/steps_95000_pytorch_model.pt` | 高潜力候选，需补 n300/n1000 |
+
+## 8. 组员如何评测
+
+组员只需要能访问 `public/seven`，并把 `MEMBER` 改成自己的名字，输出会写到自己的 public member 目录。
 
 ```bash
 cd /inspire/qb-ilm2/project/26summer-camp-10/26220172/WMH/starVLA
 source /inspire/qb-ilm2/project/26summer-camp-10/26220172/starvla_env.sh
+
+MEMBER=GTY \
+CANDIDATES="aug_hardv2 mirror_hardv2 lora2000 base8k" \
+TOTAL_SEQUENCES=300 \
+GPU_IDS=0,1,2,3 \
+WORKERS_PER_GPU=1 \
+BASE_PORT=7400 \
+bash examples/calvin_autoresearch/scripts/run_public_wmh_best_eval.sh
 ```
 
-Prepare stable public links and the manifest used by the final image/test
-harness:
-
-```bash
-bash examples/calvin_autoresearch/scripts/prepare_submission_env.sh
-```
-
-If this shell cannot write `/public/seven`, run the same command in a login or
-GPU shell with public write permission. The key link it creates is:
-
-```bash
-mkdir -p /inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/shared/checkpoints/wmh_trained
-ln -sfnT \
-  /inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/abc_pretrain_qwen3vl_gr00t_headonly_h200_60k_0518_163437/checkpoints/steps_60000_pytorch_model.pt \
-  /inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/shared/checkpoints/wmh_trained/best_abc_to_d_steps_60000_pytorch_model.pt
-```
-
-Reproduce CALVIN ABC training on a 3-GPU H200 allocation:
-
-```bash
-GPU_IDS=0,1,2 NUM_PROCESSES=3 MAX_TRAIN_STEPS=60000 \
-  bash examples/calvin_autoresearch/scripts/run_train_abc_h200_oneclick.sh
-```
-
-Run one-command ABC->D closed-loop evaluation. Use `NUM_SEQUENCES=10` for a
-short smoke pass and `NUM_SEQUENCES=1000` for the formal pass.
-The default evaluator disables CALVIN EGL rendering for portability; set
-`CALVIN_USE_EGL=1` only if the GPU image has a working EGL stack.
-
-```bash
-NUM_SEQUENCES=10 GPU_ID=0 PORT=5694 \
-  bash examples/calvin_autoresearch/scripts/run_eval_abc_to_d_oneclick.sh
-```
-
-To use multiple H200s, run the sharded parallel evaluator. It starts one or more
-policy servers per GPU, assigns non-overlapping sequence indices, and writes an
-aggregated `results.json`. New runs also write `metrics.json` and
-`metrics_sequences_epoch_0.jsonl` with conditional success, failure position,
-failure step, per-atomic-task success, exact task-chain success, near-miss
-flags, and action magnitude/saturation/jitter statistics.
-
-```bash
-TOTAL_SEQUENCES=1000 GPU_IDS=0,1,2,3 BASE_PORT=5800 \
-  bash examples/calvin_autoresearch/scripts/run_eval_abc_to_d_parallel_auto.sh
-```
-
-For a conservative run that uses exactly one worker on each GPU:
-
-```bash
-TOTAL_SEQUENCES=1000 GPU_IDS=0,1,2,3 WORKERS_PER_GPU=1 BASE_PORT=5800 \
-  bash examples/calvin_autoresearch/scripts/run_eval_abc_to_d_parallel_auto.sh
-```
-
-If all workers finished but the parent process did not aggregate, finalize the
-directory manually:
-
-```bash
-EVAL_DIR=/path/to/eval_abc_to_d_parallel_n1000_xxxx \
-  bash examples/calvin_autoresearch/scripts/finalize_parallel_eval_dir.sh
-```
-
-Print the detailed metric summary:
-
-```bash
-python examples/calvin_autoresearch/scripts/summarize_eval_metrics.py \
-  /path/to/eval_abc_to_d_parallel_n1000_xxxx/metrics.json
-```
-
-To compare D closed-loop task success with an ABC closed-loop eval, pass both
-metrics files. Without `--abc-metrics`, the script reports ABC LeRobot training
-task distribution only, not ABC success rate.
-
-```bash
-python examples/calvin_autoresearch/scripts/compare_abc_d_task_success.py \
-  --d-metrics /path/to/d_eval/metrics.json \
-  --abc-metrics /path/to/abc_eval/metrics.json \
-  --out /path/to/abc_vs_d_task_success.json
-```
-
-The current best checkpoint is linked at:
+输出位置：
 
 ```text
-/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/shared/checkpoints/wmh_trained/best_abc_to_d_steps_60000_pytorch_model.pt
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/$MEMBER/reports/
+/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/$MEMBER/logs/
 ```
 
-## Preflight
+建议先用 `WORKERS_PER_GPU=1`，稳定后再尝试 `WORKERS_PER_GPU=2`。
+
+## 9. 常用入口
+
+查看 WMH 命令：
 
 ```bash
-source /inspire/qb-ilm2/project/26summer-camp-10/26220172/starvla_env.sh
-bash examples/calvin_autoresearch/scripts/verify_assets.sh
+./wmh help
 ```
 
-Use `STRICT_ASSETS=1` when the base model and datasets should already be
-present:
+跑候选 n300：
 
 ```bash
-STRICT_ASSETS=1 bash examples/calvin_autoresearch/scripts/verify_assets.sh
+./wmh eval-candidates-n300
 ```
 
-Expected default asset locations:
-
-```text
-playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
-playground/Datasets/calvin_lerobot/calvin_abc_train_v3.0
-playground/Datasets/calvin_original/task_D_D
-```
-
-The full asset list is tracked in `examples/calvin_autoresearch/configs/assets.yaml`.
-
-Download or link the base model and LeRobot assets:
+查看候选 eval 状态：
 
 ```bash
-bash examples/calvin_autoresearch/scripts/setup_assets.sh
+./wmh status-candidates-eval
+./wmh tail-candidates-eval
 ```
 
-The official CALVIN D dataset is already reused from:
-
-```text
-/inspire/qb-ilm2/project/26summer-camp-10/public/inspire_shared/calvin_d_d
-```
-
-`prepare_submission_env.sh` links it into both the local project layout and the
-shared `/public/seven` layout. Verify the formal D split with:
+跑 mirror preview：
 
 ```bash
-CHECK_ORIGINAL_D=1 STRICT_ASSETS=1 bash examples/calvin_autoresearch/scripts/verify_assets.sh
+python examples/calvin_autoresearch/scripts/visualize_lr_mirror_trajectory.py
 ```
 
-## Train One Legal Smoke Checkpoint
+汇总 eval metrics：
 
 ```bash
-source /inspire/qb-ilm2/project/26summer-camp-10/26220172/starvla_env.sh
-STRICT_ASSETS=1 MAX_TRAIN_STEPS=1 SAVE_INTERVAL=1 NUM_PROCESSES=1 \
-  bash examples/calvin_autoresearch/scripts/run_train_smoke.sh
+python examples/calvin_autoresearch/scripts/summarize_eval_metrics.py /path/to/metrics.json
 ```
 
-This writes a new WMH checkpoint under:
+## 10. 下一步
 
-```text
-results/Checkpoints/baseline_qwen3vl_action_gr00t_calvin_abc_smoke/checkpoints/
-```
-
-## Train CALVIN ABC On H200
-
-Run this in a GPU session. It freezes the Qwen VLM interface and trains the
-randomly initialized QwenGR00T / DiT-B action head on CALVIN ABC only.
-
-```bash
-source /inspire/qb-ilm2/project/26summer-camp-10/26220172/starvla_env.sh
-GPU_IDS=0,1,2 NUM_PROCESSES=3 BATCH_SIZE=16 MAX_TRAIN_STEPS=20000 SAVE_INTERVAL=5000 \
-  DATALOADER_NUM_WORKERS=8 DATALOADER_PREFETCH_FACTOR=2 \
-  bash examples/calvin_autoresearch/scripts/run_train_abc_pretrain_h200.sh
-```
-
-By default, checkpoints are written under:
-
-```text
-/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/
-```
-
-This launcher is hard-gated to `calvin_abc_train_v3.0`; it refuses CALVIN D or
-ABCD-D dataset names.
-
-## Serve And Evaluate D Smoke
-
-Start the policy server with a newly trained WMH checkpoint:
-
-```bash
-CKPT=results/Checkpoints/baseline_qwen3vl_action_gr00t_calvin_abc_smoke/checkpoints/steps_1_pytorch_model.pt \
-  bash examples/calvin_autoresearch/scripts/run_policy_server.sh
-```
-
-In a CALVIN-capable environment, run one D sequence:
-
-```bash
-CALVIN_PYTHON=/path/to/calvin/env/bin/python \
-CALVIN_D_DATASET=/path/to/calvin/task_D_D \
-CALVIN_CONFIG_PATH=/path/to/calvin/calvin_models/conf \
-CKPT=results/Checkpoints/baseline_qwen3vl_action_gr00t_calvin_abc_smoke/checkpoints/steps_1_pytorch_model.pt \
-NUM_SEQUENCES=1 \
-  bash examples/calvin_autoresearch/scripts/run_eval_d_smoke.sh
-```
-
-## Formal ABC To D Eval
-
-For normal use, prefer the one-command evaluator above. The explicit two-step
-form is useful for debugging server startup separately:
-
-```bash
-RUN_ID=abc_pretrain_qwen3vl_gr00t_headonly_h200_60k_0518_163437
-CKPT=/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/runs/${RUN_ID}/checkpoints/steps_60000_pytorch_model.pt
-CALVIN_D_DATASET=/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/shared/datasets/calvin_original/task_D_D
-CALVIN_CONFIG_PATH=/inspire/qb-ilm2/project/26summer-camp-10/public/four/calvin/calvin_models/conf
-CALVIN_PYTHON=/inspire/qb-ilm2/project/26summer-camp-10/public/four/miniconda3/envs/calvin_venv/bin/python
-EVAL_LOG_DIR=/inspire/qb-ilm2/project/26summer-camp-10/public/seven/starvla_calvin/members/WMH/reports/eval_abc_to_d_formal_n10
-
-GPU_ID=0 PORT=5694 CKPT="${CKPT}" \
-  bash examples/calvin_autoresearch/scripts/run_policy_server.sh
-
-CALVIN_PYTHON="${CALVIN_PYTHON}" \
-CALVIN_D_DATASET="${CALVIN_D_DATASET}" \
-CALVIN_CONFIG_PATH="${CALVIN_CONFIG_PATH}" \
-CKPT="${CKPT}" \
-PORT=5694 \
-NUM_SEQUENCES=10 \
-EVAL_LOG_DIR="${EVAL_LOG_DIR}" \
-  bash examples/calvin_autoresearch/scripts/run_eval_d_formal.sh
-```
+1. 对 `GTY MoE95k` 跑公平的 D n300/n1000。
+2. 对 `MoE95k + fresh LoRA + hardv2 aug` 跑 D n300。
+3. 对 mirror branch 做 left/right task subset targeted eval，而不是只看 aggregate。
+4. 对 state-aware branch 做 state zero/shuffle eval，确认 proprio 是否真的被使用。
+5. 对所有 MoE / LoRA candidate 强制检查 drawer regression。
+6. 如果新 candidate 超过 `aug_hardv2`，再升级到 D n1000 formal eval。
